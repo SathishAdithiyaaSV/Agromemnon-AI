@@ -1,0 +1,414 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+  Palette keeps the inspiration's agricultural green + harvest orange pairing, but
+  moves it onto a warm paper background and deeper, less saturated greens so the UI
+  reads as printed field notes rather than a default dashboard.
+*/
+:root {
+  --background: oklch(0.982 0.009 92);
+  --foreground: oklch(0.24 0.02 155);
+
+  --card: oklch(1 0.003 92);
+  --card-foreground: var(--foreground);
+
+  --popover: oklch(1 0.003 92);
+  --popover-foreground: var(--foreground);
+
+  --primary: oklch(0.5 0.115 152);
+  --primary-foreground: oklch(0.99 0.008 95);
+
+  --secondary: oklch(0.938 0.028 150);
+  --secondary-foreground: oklch(0.32 0.05 152);
+
+  --muted: oklch(0.955 0.012 95);
+  --muted-foreground: oklch(0.5 0.02 150);
+
+  --accent: oklch(0.74 0.155 62);
+  --accent-foreground: oklch(0.26 0.05 55);
+
+  --destructive: oklch(0.55 0.2 27);
+  --destructive-foreground: oklch(0.99 0.008 95);
+
+  --border: oklch(0.9 0.015 120);
+  --input: oklch(0.9 0.015 120);
+  --ring: oklch(0.5 0.115 152);
+
+  /* Topic accents: crops, water, schemes, soil. Used for capability cards and chips. */
+  --leaf: oklch(0.56 0.13 148);
+  --water: oklch(0.6 0.1 230);
+  --scheme: oklch(0.55 0.13 295);
+  --soil: oklch(0.52 0.09 55);
+
+  --radius: 0.875rem;
+}
+
+.dark {
+  --background: oklch(0.19 0.018 155);
+  --foreground: oklch(0.95 0.008 95);
+
+  --card: oklch(0.228 0.02 155);
+  --card-foreground: var(--foreground);
+
+  --popover: oklch(0.228 0.02 155);
+  --popover-foreground: var(--foreground);
+
+  --primary: oklch(0.7 0.13 152);
+  --primary-foreground: oklch(0.17 0.02 155);
+
+  --secondary: oklch(0.28 0.03 152);
+  --secondary-foreground: oklch(0.93 0.01 95);
+
+  --muted: oklch(0.262 0.018 155);
+  --muted-foreground: oklch(0.71 0.015 130);
+
+  --accent: oklch(0.77 0.15 65);
+  --accent-foreground: oklch(0.2 0.03 55);
+
+  --destructive: oklch(0.62 0.19 25);
+  --destructive-foreground: oklch(0.99 0.008 95);
+
+  --border: oklch(0.31 0.02 150);
+  --input: oklch(0.31 0.02 150);
+  --ring: oklch(0.7 0.13 152);
+
+  --leaf: oklch(0.72 0.13 148);
+  --water: oklch(0.72 0.1 230);
+  --scheme: oklch(0.72 0.12 295);
+  --soil: oklch(0.72 0.09 60);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-leaf: var(--leaf);
+  --color-water: var(--water);
+  --color-scheme: var(--scheme);
+  --color-soil: var(--soil);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
+
+  --radius-sm: calc(var(--radius) - 6px);
+  --radius-md: calc(var(--radius) - 3px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 6px);
+  --radius-2xl: calc(var(--radius) + 14px);
+
+  --animate-rise: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-sprout: sprout 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-shimmer: shimmer 1.8s linear infinite;
+  --animate-drift: drift 22s linear infinite;
+  --animate-fade: fade 0.2s ease-out both;
+  --animate-slide-left: slide-left 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sprout {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-80px, 0, 0);
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 22%, transparent);
+  }
+}
+
+@layer utilities {
+  /* Faint plough-furrow lines. The page's signature texture — cheap, and it keeps
+     large empty areas from looking like an unstyled div. */
+  .furrows {
+    background-image: repeating-linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--primary) 7%, transparent) 0px,
+      color-mix(in oklch, var(--primary) 7%, transparent) 1px,
+      transparent 1px,
+      transparent 14px
+    );
+  }
+
+  .furrows-diag {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      color-mix(in oklch, var(--primary) 6%, transparent) 0px,
+      color-mix(in oklch, var(--primary) 6%, transparent) 1px,
+      transparent 1px,
+      transparent 11px
+    );
+  }
+
+  .grain::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Paired with <Reveal>. `both` holds the opening frame through the stagger
+     delay; reduced motion drops the animation entirely, which leaves the
+     element in its natural, visible state. */
+  .reveal {
+    animation: rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reveal {
+      animation: none;
+    }
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+}
+
+/*
+  Markdown coming back from the agent: it emits headings, nested lists and — for
+  mandi prices and fertilizer doses — wide tables. Styled by hand rather than with
+  a typography plugin so the tables can scroll independently of the bubble.
+*/
+.md-body {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+}
+
+.md-body > * + * {
+  margin-top: 0.75em;
+}
+
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.md-body h1 {
+  font-size: 1.3rem;
+}
+.md-body h2 {
+  font-size: 1.15rem;
+}
+.md-body h3 {
+  font-size: 1.03rem;
+}
+
+.md-body ul,
+.md-body ol {
+  padding-inline-start: 1.15rem;
+}
+
+.md-body ul {
+  list-style: none;
+}
+
+.md-body ul > li {
+  position: relative;
+}
+
+.md-body ul > li::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: -0.9rem;
+  top: 0.62em;
+  width: 0.36rem;
+  height: 0.36rem;
+  border-radius: 1px;
+  transform: rotate(45deg);
+  background: color-mix(in oklch, var(--primary) 70%, transparent);
+}
+
+.md-body ol {
+  list-style: decimal;
+}
+
+.md-body li + li {
+  margin-top: 0.3em;
+}
+
+.md-body a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md-body strong {
+  font-weight: 650;
+}
+
+.md-body code {
+  font-size: 0.86em;
+  padding: 0.1em 0.36em;
+  border-radius: 5px;
+  background: color-mix(in oklch, var(--muted) 80%, transparent);
+  border: 1px solid var(--border);
+}
+
+.md-body pre {
+  overflow-x: auto;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius-md);
+  background: color-mix(in oklch, var(--muted) 80%, transparent);
+  border: 1px solid var(--border);
+}
+
+.md-body pre code {
+  border: 0;
+  padding: 0;
+  background: none;
+}
+
+.md-body blockquote {
+  padding-inline-start: 0.85rem;
+  border-inline-start: 3px solid color-mix(in oklch, var(--accent) 60%, transparent);
+  color: var(--muted-foreground);
+}
+
+.md-body hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.md-body .table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  -webkit-overflow-scrolling: touch;
+}
+
+.md-body table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.875rem;
+}
+
+.md-body th,
+.md-body td {
+  padding: 0.5rem 0.7rem;
+  text-align: start;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.md-body thead th {
+  background: color-mix(in oklch, var(--muted) 85%, transparent);
+  font-weight: 600;
+  font-size: 0.8125rem;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.md-body tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.md-body tbody tr:nth-child(even) td {
+  background: color-mix(in oklch, var(--muted) 40%, transparent);
+}

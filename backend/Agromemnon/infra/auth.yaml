@@ -1,0 +1,126 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Cognito user pool for the Agromemnon web frontend. Farmers sign up with an email and
+  password, confirm the address with an emailed code, and the frontend sends the pool's
+  ID token to the /chat API (see infra/api.yaml). The farmer's profile — name, age,
+  state, district, language — lives on the user as attributes, so it follows them
+  between devices and needs no separate database.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: Agromemnon
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub '${ProjectName}-farmers'
+      # Sign-in is by email only; Cognito still keeps an opaque internal username.
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      UsernameConfiguration:
+        CaseSensitive: false
+      # The pool's default email sender is capped at ~50 messages/day, which is
+      # enough for a demo. For production, point this at SES instead.
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireUppercase: false
+          RequireSymbols: false
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      # Custom attributes must be declared here: a pool's schema cannot be changed
+      # after creation, so adding one later means recreating the pool (and losing
+      # its users). Mutable, because onboarding writes them after sign-up.
+      Schema:
+        - Name: name
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+        - Name: age
+          AttributeDataType: Number
+          Mutable: true
+          NumberAttributeConstraints:
+            MinValue: '16'
+            MaxValue: '120'
+        - Name: state
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MaxLength: '128'
+        - Name: district
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MaxLength: '128'
+        - Name: language
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MaxLength: '8'
+        - Name: onboarded
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MaxLength: '8'
+      UserPoolTags:
+        agentcore:project-name: !Ref ProjectName
+
+  # A public client: no secret, because a browser cannot keep one. Cognito rejects
+  # SECRET_HASH-less calls on a client that has a secret, so GenerateSecret must
+  # stay false for the web app.
+  WebClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub '${ProjectName}-web'
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      ReadAttributes:
+        - email
+        - email_verified
+        - name
+        - custom:age
+        - custom:state
+        - custom:district
+        - custom:language
+        - custom:onboarded
+      WriteAttributes:
+        - email
+        - name
+        - custom:age
+        - custom:state
+        - custom:district
+        - custom:language
+        - custom:onboarded
+
+Outputs:
+  UserPoolId:
+    Description: Pass to infra/api.yaml as UserPoolId, and to the frontend as NEXT_PUBLIC_COGNITO_USER_POOL_ID.
+    Value: !Ref UserPool
+
+  UserPoolClientId:
+    Description: Pass to infra/api.yaml as UserPoolClientId, and to the frontend as NEXT_PUBLIC_COGNITO_CLIENT_ID.
+    Value: !Ref WebClient
+
+  Issuer:
+    Description: JWT issuer the API's authorizer validates against.
+    Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'

@@ -173,27 +173,50 @@ aws cloudformation describe-stacks --stack-name Agromemnon-api \
 
 ### Current Deployment
 
-The API is already deployed in `ap-south-1`. Call it with a prompt and a session id; reusing a session id continues that conversation:
+The API is already deployed in `ap-south-1`. It now requires a Cognito ID token (see
+step 12), so every call needs an `Authorization` header. Grab a token for an existing
+account with:
+
+```bash
+TOKEN=$(aws cognito-idp admin-initiate-auth \
+  --user-pool-id ap-south-1_Td2koDmlX \
+  --client-id 5htao3dkmjb05rog7gs3kd7883 \
+  --auth-flow ADMIN_USER_PASSWORD_AUTH \
+  --auth-parameters USERNAME=<email>,PASSWORD=<password> \
+  --query 'AuthenticationResult.IdToken' --output text)
+```
+
+That flow is not enabled on the web client, so either enable
+`ALLOW_ADMIN_USER_PASSWORD_AUTH` on it temporarily or read a token out of the
+frontend (it is in `localStorage` under a `CognitoIdentityServiceProvider.*.idToken`
+key after signing in).
+
+Then call it with a prompt and a session id; reusing a session id continues that
+conversation:
 
 ```bash
 # Simple greeting
 curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"prompt":"Say hello in one sentence.","sessionId":"test-1"}'
 
 # Mandi price query
 curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"prompt":"What is the mandi price of tomato in Tamil Nadu?","sessionId":"test-1"}'
 
 # Fertilizer recommendation (requires soil test data)
 curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"prompt":"My soil test for banana in Karnataka shows N=250, P=60, K=300, OC=0.75%. What fertilizer should I use?","sessionId":"test-1"}'
 
 # Follow-up on same session (tests conversation memory)
 curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"prompt":"What crop did I just ask about?","sessionId":"test-1"}'
 ```
 
@@ -201,8 +224,9 @@ Responses look like `{"response": "...", "sessionId": "...", "stopReason": "end_
 "usage": {...}}`, and errors like `{"error": "..."}`. Things worth knowing before wiring up a
 frontend:
 
-- **The endpoint is unauthenticated.** Anyone with the URL can spend your Gemini quota. Add an
-  authorizer or an API key before putting it anywhere public.
+- **The endpoint requires a Cognito ID token** (step 12). Without one API Gateway
+  returns `401` before the Lambda runs. Anyone with an account in the pool can still
+  spend your Gemini quota, so keep self-sign-up off the pool if that matters.
 - **API Gateway gives up at 30 seconds**, which is a hard ceiling for HTTP APIs. A turn that
   needs several tool calls can exceed it; the Lambda returns `504` with a clear message, or
   `200` with `"truncated": true` if partial text arrived. For long turns, serve the agent over
@@ -220,7 +244,61 @@ frontend:
   Note that `agentcore deploy` rewrites the runtime's environment from `agentcore.json`, so
   re-apply the key after each deploy.
 
-## 12. Redeploy after code changes
+## 12. Deploy the Cognito user pool and lock the API down
+
+The web frontend signs farmers in with Cognito, and the same pool guards the `/chat`
+API. The pool is defined in `infra/auth.yaml`; it also declares the custom attributes
+the frontend stores the farmer's profile in (`custom:state`, `custom:district`,
+`custom:age`, `custom:language`, `custom:onboarded`), which is why a pool cannot be
+swapped for a hand-made one — a pool's schema is fixed at creation.
+
+```bash
+aws cloudformation deploy \
+  --template-file infra/auth.yaml \
+  --stack-name Agromemnon-auth \
+  --region ap-south-1
+
+aws cloudformation describe-stacks --stack-name Agromemnon-auth \
+  --region ap-south-1 --query 'Stacks[0].Outputs' --output table
+```
+
+Then re-deploy the API with those two outputs. `infra/api.yaml` attaches a JWT
+authorizer to `POST /chat` only when both parameters are non-empty, so passing them
+is what turns authentication on (and omitting them leaves the endpoint open):
+
+```bash
+aws cloudformation deploy \
+  --template-file infra/api.yaml \
+  --stack-name Agromemnon-api \
+  --region ap-south-1 \
+  --capabilities CAPABILITY_IAM \
+  --parameter-overrides \
+    AgentRuntimeArn=<runtime ARN> \
+    UserPoolId=<UserPoolId output> \
+    UserPoolClientId=<UserPoolClientId output>
+```
+
+The stack's `AuthMode` output reports which mode it ended up in. Already deployed in
+`ap-south-1`: pool `ap-south-1_Td2koDmlX`, client `5htao3dkmjb05rog7gs3kd7883`.
+
+## 13. Run the web frontend
+
+The frontend lives in [`frontend/`](frontend/) — a Next.js app that calls the `/chat`
+endpoint with a Cognito ID token. It needs the API URL and the pool identifiers in
+`frontend/.env.local`:
+
+```bash
+cd ../../frontend      # from backend/Agromemnon
+cp .env.example .env.local
+# NEXT_PUBLIC_AGENT_API_URL, NEXT_PUBLIC_COGNITO_USER_POOL_ID, NEXT_PUBLIC_COGNITO_CLIENT_ID
+npm install
+npm run dev            # http://localhost:3000
+```
+
+`frontend/README.md` covers the screens, how the language instruction is prepended to
+each prompt, the voice hooks, and what is still missing for photo questions.
+
+## 14. Redeploy after code changes
 
 Changing agent/tool code (`app/Agromemnon/...`) or the runtime config (`agentcore/agentcore.json`)
 needs a redeploy for AWS to see it. `agentcore dev` (step 9) hot-reloads locally — it's the

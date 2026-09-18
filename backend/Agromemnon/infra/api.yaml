@@ -18,6 +18,24 @@ Parameters:
     Type: Number
     Default: 14
 
+  # Leave both empty to keep the endpoint open (the original behaviour). Set both
+  # to the outputs of infra/auth.yaml and the route starts requiring a Cognito ID
+  # token in the Authorization header.
+  UserPoolId:
+    Type: String
+    Default: ''
+    Description: Cognito user pool ID whose ID tokens may call this API.
+
+  UserPoolClientId:
+    Type: String
+    Default: ''
+    Description: Cognito app client ID; becomes the JWT audience the authorizer checks.
+
+Conditions:
+  RequireAuth: !And
+    - !Not [!Equals [!Ref UserPoolId, '']]
+    - !Not [!Equals [!Ref UserPoolClientId, '']]
+
 Resources:
   # ---------------------------------------------------------------- Lambda role
   FunctionRole:
@@ -237,12 +255,30 @@ Resources:
       # synchronously and needs streaming or an async job instead.
       TimeoutInMillis: 30000
 
+  # API Gateway validates the token's signature, issuer, audience and expiry before
+  # the Lambda runs, so the function never sees an unauthenticated request. The
+  # frontend sends the ID token (not the access token) because that is the one
+  # carrying the audience claim this authorizer matches against.
+  JwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Condition: RequireAuth
+    Properties:
+      ApiId: !Ref HttpApi
+      Name: !Sub '${ProjectName}-cognito'
+      AuthorizerType: JWT
+      IdentitySource: ['$request.header.Authorization']
+      JwtConfiguration:
+        Audience: [!Ref UserPoolClientId]
+        Issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPoolId}'
+
   ChatRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: 'POST /chat'
       Target: !Sub 'integrations/${ChatIntegration}'
+      AuthorizationType: !If [RequireAuth, JWT, NONE]
+      AuthorizerId: !If [RequireAuth, !Ref JwtAuthorizer, !Ref 'AWS::NoValue']
 
   DefaultStage:
     Type: AWS::ApiGatewayV2::Stage
@@ -270,3 +306,7 @@ Outputs:
 
   FunctionName:
     Value: !Ref ChatFunction
+
+  AuthMode:
+    Description: Whether the /chat route requires a Cognito ID token.
+    Value: !If [RequireAuth, 'JWT (Cognito ID token required)', 'NONE (open endpoint)']

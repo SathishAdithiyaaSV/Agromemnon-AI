@@ -1,6 +1,6 @@
 # Environment variables
 .env
-
+*inspiration/*
 # Python
 __pycache__/
 *.py[cod]

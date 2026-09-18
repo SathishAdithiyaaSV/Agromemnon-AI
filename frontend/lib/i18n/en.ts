@@ -1,0 +1,194 @@
+/**
+ * English is the source of truth: `TranslationKey` is derived from it, and every
+ * other dictionary is typed `Record<TranslationKey, string>`, so adding a key here
+ * makes the build fail until all five languages have it.
+ */
+export const en = {
+  'brand.name': 'Agromemnon',
+  'brand.role': 'Farm advisory council',
+
+  'nav.features': 'What it does',
+  'nav.how': 'How it works',
+  'nav.signIn': 'Sign in',
+  'nav.start': 'Start free',
+
+  'landing.hero.eyebrow': 'Built on Amazon Bedrock AgentCore',
+  'landing.hero.title': 'Four farm specialists,',
+  'landing.hero.titleAccent': 'one conversation.',
+  'landing.hero.subtitle':
+    'Ask about crops, water, mandi rates or government schemes — out loud, in your own language. Agromemnon consults the right adviser and answers with the data it used.',
+  'landing.hero.cta': 'Ask your first question',
+  'landing.hero.secondary': 'See what it knows',
+  'landing.hero.note': 'Free to use · Voice and text · 5 languages',
+
+  'landing.council.title': 'A council, not a chatbot',
+  'landing.council.subtitle':
+    'Your question is routed to the specialists it belongs to. Several may answer at once, and the replies come back as one.',
+  'landing.council.crops.title': 'Crop planner',
+  'landing.council.crops.desc':
+    'What to sow and when, weighed against the forecast, what has yielded well nearby, and today’s prices.',
+  'landing.council.crops.tag': 'Weather · Past yields · Prices',
+  'landing.council.water.title': 'Irrigation adviser',
+  'landing.council.water.desc':
+    'When to water and how much, from your soil’s holding capacity — and when rain makes it unnecessary.',
+  'landing.council.water.tag': 'Forecast · Soil type',
+  'landing.council.schemes.title': 'Scheme adviser',
+  'landing.council.schemes.desc':
+    'Subsidies and schemes you qualify for, with the eligibility rules and the steps to apply. Answers come from the scheme database, not from memory.',
+  'landing.council.schemes.tag': 'Eligibility · How to apply',
+  'landing.council.market.title': 'Fertilizer & market',
+  'landing.council.market.desc':
+    'Live mandi rates by crop and state, and fertilizer doses worked out from your Soil Health Card readings.',
+  'landing.council.market.tag': 'Mandi rates · N-P-K doses',
+
+  'landing.features.title': 'Made for the field',
+  'landing.features.voice.title': 'Speak, don’t type',
+  'landing.features.voice.desc':
+    'Hold the mic and talk. Answers can be read back aloud, so the app works with one hand and dusty fingers.',
+  'landing.features.lang.title': 'Your language throughout',
+  'landing.features.lang.desc':
+    'English, हिंदी, ಕನ್ನಡ, मराठी and தமிழ் — the interface, the question and the answer, all of it.',
+  'landing.features.memory.title': 'It remembers the thread',
+  'landing.features.memory.desc':
+    'Follow-ups work. Ask “and what about next month?” without repeating your village, crop or soil test.',
+  'landing.features.grounded.title': 'It shows its working',
+  'landing.features.grounded.desc':
+    'Every recommendation names the data behind it, and the advisers ask for your soil test rather than inventing one.',
+
+  'landing.how.title': 'Three steps',
+  'landing.how.step1.title': 'Tell it where you farm',
+  'landing.how.step1.desc':
+    'Your district and state, once. Weather, soil and price lookups use it from then on.',
+  'landing.how.step2.title': 'Ask in your language',
+  'landing.how.step2.desc': 'Speak or type. No forms, no crop codes, no menus to learn.',
+  'landing.how.step3.title': 'Get advice you can check',
+  'landing.how.step3.desc':
+    'A plain answer with the reasoning and the sources, ready to act on this week.',
+
+  'landing.cta.title': 'What do you need to decide this season?',
+  'landing.cta.subtitle': 'Create an account and ask. It takes a minute.',
+  'landing.cta.button': 'Get started',
+
+  'landing.footer.tagline': 'Agricultural advice, grounded in data, in the language you think in.',
+  'landing.footer.built': 'Built for farmers.',
+  'landing.footer.disclaimer':
+    'Advisory only. Confirm critical decisions with your local agriculture officer.',
+
+  'auth.signIn.title': 'Welcome back',
+  'auth.signIn.subtitle': 'Sign in to pick up where you left off.',
+  'auth.signUp.title': 'Create your account',
+  'auth.signUp.subtitle': 'An email and a password is all it takes.',
+  'auth.email': 'Email',
+  'auth.password': 'Password',
+  'auth.confirmPassword': 'Repeat password',
+  'auth.passwordHint': 'At least 8 characters, with a number and a lowercase letter.',
+  'auth.signInButton': 'Sign in',
+  'auth.signUpButton': 'Create account',
+  'auth.toSignUp': 'New here? Create an account',
+  'auth.toSignIn': 'Already have an account? Sign in',
+  'auth.forgot': 'Forgot password?',
+  'auth.verify.title': 'Check your email',
+  'auth.verify.subtitle': 'We sent a 6-digit code to {email}. Enter it to finish signing up.',
+  'auth.verify.code': 'Verification code',
+  'auth.verify.button': 'Verify and continue',
+  'auth.verify.resend': 'Send the code again',
+  'auth.verify.resent': 'A new code is on its way.',
+  'auth.reset.title': 'Reset your password',
+  'auth.reset.subtitle': 'We’ll email you a code to set a new password.',
+  'auth.reset.send': 'Send code',
+  'auth.reset.newPassword': 'New password',
+  'auth.reset.button': 'Set new password',
+  'auth.reset.done': 'Password changed. Sign in with the new one.',
+  'auth.back': 'Back',
+  'auth.mismatch': 'The two passwords do not match.',
+  'auth.unconfigured':
+    'Sign-in is not configured. Deploy infra/auth.yaml and set the Cognito variables in .env.local.',
+
+  'onboarding.title': 'Set up your farm',
+  'onboarding.subtitle': 'Two quick steps. This is what makes the advice local to you.',
+  'onboarding.step': 'Step {n} of 2',
+  'onboarding.you': 'About you',
+  'onboarding.where': 'Where you farm',
+  'onboarding.name': 'Your name',
+  'onboarding.namePlaceholder': 'e.g. Lakshmi Devi',
+  'onboarding.age': 'Age',
+  'onboarding.agePlaceholder': 'e.g. 41',
+  'onboarding.language': 'Preferred language',
+  'onboarding.state': 'State',
+  'onboarding.statePlaceholder': 'Select your state',
+  'onboarding.district': 'District',
+  'onboarding.districtPlaceholder': 'Select your district',
+  'onboarding.next': 'Continue',
+  'onboarding.finish': 'Start asking',
+  'onboarding.privacy': 'Only used to make advice local to you. Nothing is shared.',
+  'onboarding.ageInvalid': 'Enter an age between 16 and 120.',
+
+  'chat.title': 'Ask Agromemnon',
+  'chat.newChat': 'New question',
+  'chat.history': 'Earlier questions',
+  'chat.historyEmpty': 'Nothing here yet.',
+  'chat.welcome.title': 'What’s on your land today?',
+  'chat.welcome.subtitle': 'Speak or type. Answers come back in your language.',
+  'chat.welcome.examples': 'Or start with one of these',
+  'chat.placeholder': 'Ask about crops, water, prices or schemes…',
+  'chat.placeholderPhoto': 'Describe what you are seeing in the photo…',
+  'chat.send': 'Send',
+  'chat.stop': 'Stop',
+  'chat.mic': 'Hold to speak',
+  'chat.listening': 'Listening — speak now',
+  'chat.micDenied': 'Microphone blocked. Allow it in your browser settings.',
+  'chat.micUnsupported': 'Voice input needs Chrome, Edge or Safari.',
+  'chat.thinking': 'Consulting the advisers',
+  'chat.thinkingLong': 'Still working — complex questions take a little longer',
+  'chat.truncated':
+    'This answer was cut short at the 30-second limit. Ask a narrower question for the rest.',
+  'chat.speak': 'Read aloud',
+  'chat.speakStop': 'Stop reading',
+  'chat.speakUnsupported': 'Read-aloud is not available in this browser.',
+  'chat.copy': 'Copy',
+  'chat.copied': 'Copied',
+  'chat.retry': 'Try again',
+  'chat.attach': 'Attach a photo',
+  'chat.photoAttached': 'Photo attached',
+  'chat.photoPreview':
+    'Photo diagnosis is in preview — describe the symptoms too, so the adviser can help either way.',
+  'chat.photoTooBig': 'Photos must be under 5 MB.',
+  'chat.photoInvalid': 'That file is not an image.',
+  'chat.remove': 'Remove',
+  'chat.adviser': 'Agromemnon',
+  'chat.you': 'You',
+  'chat.delete': 'Delete this question',
+  'chat.deleteAll': 'Clear all history',
+  'chat.menu': 'Menu',
+  'chat.disclaimer': 'Agromemnon can be wrong. Check big decisions locally.',
+
+  'suggest.1': 'Which crop should I sow this month?',
+  'suggest.1.tag': 'Crop planning',
+  'suggest.2': 'What is today’s mandi price for tomato?',
+  'suggest.2.tag': 'Market',
+  'suggest.3': 'Should I irrigate this week?',
+  'suggest.3.tag': 'Irrigation',
+  'suggest.4': 'Which government schemes can I apply for?',
+  'suggest.4.tag': 'Schemes',
+
+  'profile.title': 'Your profile',
+  'profile.subtitle': 'Keep this current — the advice follows it.',
+  'profile.save': 'Save changes',
+  'profile.saved': 'Profile updated.',
+  'profile.email': 'Email',
+  'profile.emailFixed': 'Your email cannot be changed.',
+  'profile.signOut': 'Sign out',
+
+  'common.loading': 'Loading…',
+  'common.error': 'Something went wrong',
+  'common.cancel': 'Cancel',
+  'common.close': 'Close',
+  'common.saving': 'Saving…',
+  'common.language': 'Language',
+  'common.theme': 'Theme',
+  'common.light': 'Light',
+  'common.dark': 'Dark',
+  'common.system': 'System',
+} as const
+
+export type TranslationKey = keyof typeof en
