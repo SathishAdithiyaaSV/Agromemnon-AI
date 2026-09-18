@@ -17,8 +17,10 @@ dependencies = [
     "mcp ~= 1.24.0",
     "rapidfuzz>=3.14.5",
     "requests>=2.34.2",
+    "python-dotenv>=1.2.3",
     "strands-agents[gemini]>=1.15.0",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
+

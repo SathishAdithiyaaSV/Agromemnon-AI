@@ -1,0 +1,15 @@
+Scheme: Women Helpline
+
+Description:
+Women Helpline provides 24X7 emergency and non-emergency response through telephonic short-code 181 to women, by linking them with appropriate authorities such as Police, One Stop Centres, Hospitals, Legal Services Authorities etc. Additionally, it provides information about women welfare schemes and services.The Women Helpline has been integrated with the Emergency Response Support System 112 (ERSS-112) helpline of the Ministry of Home Affairs (MHA) and Child Helpline (1098). Furthermore, the Women Helpline (WHL) is being integrated with the One Stop Centre Scheme (OSC) and Hub for Empowerment of Women (HEW) to refer women affected by violence in need of redressal services.
+
+Benefits:
+1)Emergency assistance 2)Non-emergency assistance 3)Information about government schemes and services 4) Referral services
+
+Eligibility Criteria:
+Any women in distress seeking emergency/non- emergency services or information or any other individual on her behalf can connect with the Women Helpline by calling the toll free 181.
+
+How to Apply:
+The Women Helpline can be contacted through a single universal toll-free number across the country, which is 181
+
+Level: Central | Category: Women and Child
