@@ -42,4 +42,7 @@ Thumbs.db
 
 /.claude
 
+# Generated knowledge-base output
+/backend/Agromemnon/out/
+
 features
