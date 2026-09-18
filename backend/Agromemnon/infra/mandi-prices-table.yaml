@@ -1,0 +1,38 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: DynamoDB table storing AgMarkNet mandi prices scraped by the Agromemnon agent.
+
+Parameters:
+  TableName:
+    Type: String
+    Default: Agromemnon-mandi-prices
+    Description: Must match the MANDI_PRICES_TABLE env var on the agent runtime.
+
+Resources:
+  MandiPricesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: PAY_PER_REQUEST
+      # pk = "<state>#<commodity>", sk = "<report_date>#<market>#<variety>".
+      # The ISO date leads the sort key so querying a partition backwards yields
+      # the most recently published report first.
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      Tags:
+        - Key: agentcore:project-name
+          Value: Agromemnon
+
+Outputs:
+  MandiPricesTableName:
+    Description: Table name to set as MANDI_PRICES_TABLE on the runtime.
+    Value: !Ref MandiPricesTable
+  MandiPricesTableArn:
+    Value: !GetAtt MandiPricesTable.Arn

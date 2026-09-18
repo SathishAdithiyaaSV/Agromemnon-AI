@@ -15,7 +15,16 @@
       "codeLocation": "app/Agromemnon/",
       "runtimeVersion": "PYTHON_3_14",
       "networkMode": "PUBLIC",
-      "protocol": "HTTP"
+      "protocol": "HTTP",
+      "envVars": [
+        {
+          "name": "MANDI_PRICES_TABLE",
+          "value": "Agromemnon-mandi-prices"
+        }
+      ],
+      "additionalPolicies": [
+        "policies/dynamodb-mandi-prices.json"
+      ]
     }
   ],
   "memories": [],
