@@ -20,10 +20,15 @@
         {
           "name": "MANDI_PRICES_TABLE",
           "value": "Agromemnon-mandi-prices"
+        },
+        {
+          "name": "SOIL_NUTRIENTS_TABLE",
+          "value": "Agromemnon-soil-nutrients"
         }
       ],
       "additionalPolicies": [
-        "policies/dynamodb-mandi-prices.json"
+        "policies/dynamodb-mandi-prices.json",
+        "policies/dynamodb-soil-nutrients.json"
       ]
     }
   ],

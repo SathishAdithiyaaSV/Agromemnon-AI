@@ -19,6 +19,7 @@ dependencies = [
     "requests>=2.34.2",
     "python-dotenv>=1.2.3",
     "strands-agents[gemini]>=1.15.0",
+    "strands-agents-tools>=0.2.0",
 ]
 
 [tool.hatch.build.targets.wheel]
