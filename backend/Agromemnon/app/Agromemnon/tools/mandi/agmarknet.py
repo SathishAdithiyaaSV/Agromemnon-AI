@@ -7,10 +7,10 @@ app backed by this public JSON API, which publishes the same daily market data.
 
 import datetime
 import logging
-import re
 
 import requests
-from rapidfuzz import fuzz, process
+
+from tools.matching import best_match, normalize, resolve_name
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,6 @@ HEADERS = {
 }
 
 TIMEOUT = 60
-MATCH_THRESHOLD = 70
 # Reports are published a day or more behind, and not every day carries every
 # commodity, so walk back until a report actually contains it.
 LOOKBACK_DAYS = 10
@@ -63,32 +62,12 @@ def fetch_states(session: requests.Session) -> dict[str, int]:
         page += 1
 
 
-def _normalize(value: str) -> str:
-    """Strip case, spacing and punctuation so "tamilnadu" matches "Tamil Nadu"."""
-    return re.sub(r"[^a-z0-9]", "", value.lower())
-
-
-def _best_match(wanted: str, candidates: dict):
-    """Resolve a normalized name against normalized candidate keys: exact, substring, then fuzzy."""
-    if wanted in candidates:
-        return candidates[wanted]
-
-    contained = [key for key in candidates if wanted and (wanted in key or key in wanted)]
-    if contained:
-        best = process.extractOne(wanted, contained, scorer=fuzz.WRatio)
-        return candidates[best[0] if best else contained[0]]
-
-    fuzzy = process.extractOne(wanted, list(candidates), scorer=fuzz.WRatio, score_cutoff=MATCH_THRESHOLD)
-    return candidates[fuzzy[0]] if fuzzy else None
-
-
 def resolve_state(query: str, states: dict[str, int]) -> tuple[str, int]:
     """Match a state name to its API id, tolerating spelling and spacing differences."""
-    by_name = {_normalize(name): name for name in states}
-    match = _best_match(_normalize(query), by_name)
+    match = resolve_name(query, states)
     if match is None:
         raise AgMarkNetError(f"state '{query}' not recognised; known states: {', '.join(sorted(states))}")
-    return match, states[match]
+    return match
 
 
 def _flatten(payload: dict, state_name: str, report_date: datetime.date) -> list[dict]:
@@ -135,11 +114,11 @@ def match_commodity(rows: list[dict], query: str) -> list[dict]:
     by_name: dict[str, set[str]] = {}
     for row in rows:
         if row["commodity"]:
-            by_name.setdefault(_normalize(row["commodity"]), set()).add(row["commodity"])
+            by_name.setdefault(normalize(row["commodity"]), set()).add(row["commodity"])
     if not by_name:
         return []
 
-    matched = _best_match(_normalize(query), by_name)
+    matched = best_match(normalize(query), by_name)
     if not matched:
         return []
     return [row for row in rows if row["commodity"] in matched]

@@ -4,6 +4,7 @@ To add a tool: create `tools/<tool_name>.py` holding one `@tool` function, then
 import it below and add it to `ALL_TOOLS`. Any agent can then request it by name.
 """
 
+from tools.fertilizer_recommendation import fertilizer_recommendation
 from tools.historic_crops import historic_crops
 from tools.mandi_price import mandi_price
 from tools.rag_scheme_db import rag_scheme_db
@@ -11,6 +12,7 @@ from tools.soil_type import soil_type
 from tools.weather import weather
 
 ALL_TOOLS = [
+    fertilizer_recommendation,
     historic_crops,
     mandi_price,
     rag_scheme_db,
