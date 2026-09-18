@@ -94,6 +94,52 @@ The table name must match the `MANDI_PRICES_TABLE` env var declared on the runti
 `agentcore/agentcore.json`. If the table is missing the tool still answers from a live scrape —
 it just cannot reuse results between calls.
 
+## 6a. Load the soil nutrient survey
+
+The `fertilizer_recommendation` tool infers a farmer's soil condition from where their land
+is, so they do not need a Soil Health Card to get a fertilizer dose. That needs the
+government soil-nutrient survey loaded into its own table.
+
+Deploy the table:
+
+```bash
+aws cloudformation deploy \
+  --template-file infra/soil-nutrients-table.yaml \
+  --stack-name Agromemnon-soil-nutrients \
+  --region ap-south-1
+```
+
+Then load a state from the published CSV (`soil-nutrient-analysis.csv`, ~1 GB, kept out of
+git). The script streams it, so the file size does not matter:
+
+```bash
+cd app/Agromemnon
+# Check what would be written first:
+uv run python scripts/load_soil_nutrients.py \
+  --csv ../../../soil-nutrient-analysis.csv --state Karnataka --dry-run
+# Then load for real:
+AWS_REGION=ap-south-1 uv run python scripts/load_soil_nutrients.py \
+  --csv ../../../soil-nutrient-analysis.csv --state Karnataka
+cd ../..
+```
+
+Karnataka currently loads 9,347 items: 62 district-years, 474 block-years and 8,811
+village-years. Add another state by re-running with `--state <name>`; the script only
+touches the rows it writes, so states can be loaded independently.
+
+**What the data actually is.** The CSV does not contain kg/ha readings. Each row is a count
+of sampled fields falling in one rating band ("Nitrogen Low: 8, Medium: 63, High: 64"), so
+the loader converts a distribution into a single representative value by weighting each
+band's typical value by its share of samples (see
+`app/Agromemnon/tools/fertilizer/nutrients.py`). The result describes the area, not any one
+field, and the tool labels it that way in `soil_data_provenance` so the agent can pass the
+caveat on to the farmer. A farmer who does have a Soil Health Card can still supply their
+own N/P/K/OC, which overrides the survey.
+
+The table name must match the `SOIL_NUTRIENTS_TABLE` env var on the runtime in
+`agentcore/agentcore.json`. If the table is missing the tool degrades to asking the farmer
+for their soil test values rather than failing.
+
 ## 7. Configure secrets / local env
 
 Local secrets go in `agentcore/.env.local` (gitignored). The agent's model provider
@@ -207,11 +253,18 @@ curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"prompt":"What is the mandi price of tomato in Tamil Nadu?","sessionId":"test-1"}'
 
-# Fertilizer recommendation (requires soil test data)
+# Fertilizer recommendation from location alone (no soil test needed)
 curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"prompt":"My soil test for banana in Karnataka shows N=250, P=60, K=300, OC=0.75%. What fertilizer should I use?","sessionId":"test-1"}'
+  -d '{"prompt":"I grow banana in Badami taluk, Bagalkote district, Karnataka. What fertilizer should I apply? I have never had my soil tested.","sessionId":"test-1"}'
+
+# Same question from a farmer who does have a Soil Health Card; their measured
+# values override the area survey.
+curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"prompt":"My soil test for banana in Bagalkote, Karnataka shows N=250, P=60, K=300, OC=0.75%. What fertilizer should I use?","sessionId":"test-1"}'
 
 # Follow-up on same session (tests conversation memory)
 curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
@@ -307,8 +360,13 @@ CLI's own deployment that doesn't.
 1. **Test locally first**: `agentcore dev`, hit the curl in step 9, confirm the change works.
 2. **Redeploy the runtime**:
    ```bash
-   agentcore deploy
+   agentcore deploy -y --target personal
    ```
+   The target name matters. The CLI derives the CloudFormation stack name from it, and the
+   live deployment is `AgentCore-Agromemnon-personal` in account `879835157388`
+   (`ap-south-1`). Deploying under a different target name builds a **second, parallel**
+   runtime instead of updating the running one, so keep the `personal` target in
+   `agentcore/aws-targets.json` pointed at this account.
    This re-zips `app/Agromemnon/` and updates the CDK stack. It **overwrites the runtime's
    environment variables with whatever is in `agentcore/agentcore.json`** — so `GEMINI_API_KEY`,
    which lives only on the running runtime (see step 11), gets wiped every time. Re-apply it
@@ -319,7 +377,7 @@ CLI's own deployment that doesn't.
      --agent-runtime-artifact <copy from `get-agent-runtime` output> \
      --role-arn <copy from `get-agent-runtime` output> \
      --network-configuration <copy from `get-agent-runtime` output> \
-     --environment-variables MANDI_PRICES_TABLE=Agromemnon-mandi-prices,GEMINI_API_KEY=<your key>
+     --environment-variables MANDI_PRICES_TABLE=Agromemnon-mandi-prices,SOIL_NUTRIENTS_TABLE=Agromemnon-soil-nutrients,GEMINI_API_KEY=<your key>
    ```
    (`get-agent-runtime --agent-runtime-id <id>` prints the current artifact/role/network values
    to copy — `update-agent-runtime` requires them even though you're only changing env vars.)

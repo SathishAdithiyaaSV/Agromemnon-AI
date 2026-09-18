@@ -46,3 +46,7 @@ Thumbs.db
 /backend/Agromemnon/out/
 
 features
+
+# The published soil-nutrient survey is ~1 GB; load it into DynamoDB with
+# app/Agromemnon/scripts/load_soil_nutrients.py rather than committing it.
+soil-nutrient-analysis.csv

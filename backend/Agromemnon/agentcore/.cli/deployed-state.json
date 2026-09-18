@@ -1,3 +1,17 @@
 {
-  "targets": {}
+  "targets": {
+    "personal": {
+      "resources": {
+        "runtimes": {
+          "Agromemnon": {
+            "runtimeId": "Agromemnon_Agromemnon-HJ1ia4DIkG",
+            "runtimeArn": "arn:aws:bedrock-agentcore:ap-south-1:879835157388:runtime/Agromemnon_Agromemnon-HJ1ia4DIkG",
+            "roleArn": "arn:aws:iam::879835157388:role/AgentCore-Agromemnon-pers-ApplicationAgentAgromemno-xkMGaDQiwLjH"
+          }
+        },
+        "stackName": "AgentCore-Agromemnon-personal",
+        "deployHash": "5392b0762cdda3d2"
+      }
+    }
+  }
 }
