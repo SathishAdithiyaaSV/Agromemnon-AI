@@ -1,0 +1,272 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Public HTTP API for the Agromemnon agent. API Gateway (HTTP API, CORS open) fronts a
+  Lambda that invokes the deployed AgentCore runtime and returns the agent's reply as
+  JSON, so a browser frontend can call it directly without AWS credentials.
+
+Parameters:
+  AgentRuntimeArn:
+    Type: String
+    Description: ARN of the deployed AgentCore runtime to invoke.
+    AllowedPattern: ^arn:aws:bedrock-agentcore:[a-z0-9-]+:\d{12}:runtime/.+$
+
+  ProjectName:
+    Type: String
+    Default: Agromemnon
+
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+
+Resources:
+  # ---------------------------------------------------------------- Lambda role
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: invoke-agent-runtime
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: bedrock-agentcore:InvokeAgentRuntime
+                # Both forms are needed: the bare runtime ARN and the qualified
+                # ARN that addresses a specific endpoint (for example /DEFAULT).
+                Resource:
+                  - !Ref AgentRuntimeArn
+                  - !Sub '${AgentRuntimeArn}/*'
+      Tags:
+        - Key: agentcore:project-name
+          Value: !Ref ProjectName
+
+  # Declared explicitly so the logs expire; an implicitly created Lambda log
+  # group keeps them forever.
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ProjectName}-chat'
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ------------------------------------------------------------------- Lambda
+  ChatFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: FunctionLogGroup
+    Properties:
+      FunctionName: !Sub '${ProjectName}-chat'
+      Description: Invokes the AgentCore runtime and returns the agent reply as JSON.
+      Runtime: python3.13
+      Handler: index.handler
+      Role: !GetAtt FunctionRole.Arn
+      # API Gateway gives up at 30s, so the function must return before that and
+      # produce its own message rather than letting the gateway emit a bare 504.
+      Timeout: 29
+      # The work is network-bound, but more memory also means more CPU, which
+      # shortens the JSON/SSE parsing inside that 29s budget.
+      MemorySize: 1024
+      Environment:
+        Variables:
+          AGENT_RUNTIME_ARN: !Ref AgentRuntimeArn
+      Tags:
+        - Key: agentcore:project-name
+          Value: !Ref ProjectName
+      # Inlined so the whole API deploys from this one file with no build step and
+      # no S3 bucket. Lambda caps inline source at 4096 characters, so the notes
+      # that would normally be comments in the handler live here instead:
+      #
+      #   * _reply sets no CORS headers on purpose. The HTTP API below owns CORS;
+      #     a second Access-Control-Allow-Origin makes browsers reject the response.
+      #   * The runtime requires a session id of at least 33 characters. A shorter
+      #     client id is padded with a hash of itself rather than a random value, so
+      #     the same browser keeps reaching the same agent session (and its history).
+      #   * _collect reads the runtime's SSE stream. Only contentBlockDelta.delta.text
+      #     is answer text; delta.toolUse carries tool arguments and must be skipped.
+      #   * _collect stops at a deadline derived from the function's remaining time and
+      #     returns whatever text arrived, flagged as truncated. A per-read timeout is
+      #     not enough on its own: SSE events keep trickling in, so no single read ever
+      #     stalls while the turn as a whole runs past the 30s gateway limit.
+      Code:
+        ZipFile: |
+          import hashlib
+          import json
+          import os
+          import re
+          import time
+          import uuid
+
+          import boto3
+          from botocore.config import Config
+
+          RUNTIME_ARN = os.environ["AGENT_RUNTIME_ARN"]
+          client = boto3.client("bedrock-agentcore",
+                                config=Config(read_timeout=26, connect_timeout=5, retries={"max_attempts": 0}))
+
+          MIN_SESSION_LEN = 33
+          MAX_SESSION_LEN = 128
+
+
+          def _reply(status, body):
+              return {"statusCode": status,
+                      "headers": {"Content-Type": "application/json"},
+                      "body": json.dumps(body)}
+
+
+          def _session_id(raw):
+              cleaned = re.sub(r"[^A-Za-z0-9_-]", "-", (raw or "").strip())
+              if not cleaned:
+                  return (uuid.uuid4().hex + uuid.uuid4().hex)[:40]
+              if len(cleaned) < MIN_SESSION_LEN:
+                  cleaned += "-" + hashlib.sha256(cleaned.encode()).hexdigest()
+              return cleaned[:MAX_SESSION_LEN]
+
+
+          def _collect(stream, deadline):
+              chunks, stop_reason, usage, error = [], None, None, None
+              truncated = False
+
+              for line in stream.iter_lines():
+                  if time.monotonic() > deadline:
+                      truncated = True
+                      break
+                  if not line or not line.startswith(b"data:"):
+                      continue
+                  try:
+                      event = json.loads(line[5:].strip() or b"{}")
+                  except json.JSONDecodeError:
+                      continue
+                  if not isinstance(event, dict):
+                      continue
+
+                  if event.get("error"):
+                      error = str(event["error"])
+                      continue
+
+                  inner = event.get("event")
+                  if not isinstance(inner, dict):
+                      continue
+                  text = (inner.get("contentBlockDelta") or {}).get("delta", {}).get("text")
+                  if isinstance(text, str):
+                      chunks.append(text)
+                  stop_reason = (inner.get("messageStop") or {}).get("stopReason") or stop_reason
+                  usage = (inner.get("metadata") or {}).get("usage") or usage
+
+              return "".join(chunks), stop_reason, usage, error, truncated
+
+
+          def handler(event, context):
+              try:
+                  body = json.loads(event.get("body") or "{}")
+              except json.JSONDecodeError:
+                  return _reply(400, {"error": "Request body must be JSON."})
+              if not isinstance(body, dict):
+                  return _reply(400, {"error": "Request body must be a JSON object."})
+
+              prompt = body.get("prompt")
+              if not isinstance(prompt, str) or not prompt.strip():
+                  return _reply(400, {"error": "Provide a non-empty 'prompt' string."})
+
+              session_id = _session_id(body.get("sessionId"))
+              left = context.get_remaining_time_in_millis() / 1000 if context else 29
+              deadline = time.monotonic() + max(left - 3, 5)
+
+              try:
+                  response = client.invoke_agent_runtime(
+                      agentRuntimeArn=RUNTIME_ARN,
+                      runtimeSessionId=session_id,
+                      payload=json.dumps({"prompt": prompt}).encode("utf-8"),
+                  )
+                  answer, stop_reason, usage, error, truncated = _collect(response["response"], deadline)
+              except client.exceptions.ThrottlingException:
+                  return _reply(429, {"error": "The agent is busy. Retry shortly.", "sessionId": session_id})
+              except Exception as exc:
+                  print(f"invoke failed: {exc!r}")
+                  return _reply(502, {"error": "The agent could not be reached.",
+                                      "detail": repr(exc), "sessionId": session_id})
+
+              if not answer:
+                  if truncated:
+                      return _reply(504, {"error": "Timed out before the agent answered; "
+                                                   "try a narrower question.",
+                                          "sessionId": session_id})
+                  return _reply(502, {"error": error or "The agent returned no text.",
+                                      "sessionId": session_id})
+
+              result = {"response": answer, "sessionId": session_id}
+              if stop_reason:
+                  result["stopReason"] = stop_reason
+              if usage:
+                  result["usage"] = usage
+              if error:
+                  result["warning"] = error
+              if truncated:
+                  result["truncated"] = True
+              return _reply(200, result)
+
+  # --------------------------------------------------------------- HTTP API
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${ProjectName}-api'
+      Description: Public chat endpoint for the Agromemnon agent.
+      ProtocolType: HTTP
+      # Allow-all CORS. AllowCredentials must stay off: browsers reject
+      # credentialed requests against a wildcard origin.
+      CorsConfiguration:
+        AllowOrigins: ['*']
+        AllowMethods: ['*']
+        AllowHeaders: ['*']
+        MaxAge: 300
+      Tags:
+        agentcore:project-name: !Ref ProjectName
+
+  ChatIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ChatFunction.Arn
+      PayloadFormatVersion: '2.0'
+      # 30s is the HTTP API ceiling; a longer agent turn cannot be served
+      # synchronously and needs streaming or an async job instead.
+      TimeoutInMillis: 30000
+
+  ChatRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /chat'
+      Target: !Sub 'integrations/${ChatIntegration}'
+
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: $default
+      AutoDeploy: true
+
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ChatFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*/chat'
+
+Outputs:
+  ApiBaseUrl:
+    Description: Base URL of the HTTP API.
+    Value: !GetAtt HttpApi.ApiEndpoint
+
+  ChatEndpoint:
+    Description: 'POST here with a JSON body: {"prompt": "...", "sessionId": "..."}'
+    Value: !Sub '${HttpApi.ApiEndpoint}/chat'
+
+  FunctionName:
+    Value: !Ref ChatFunction

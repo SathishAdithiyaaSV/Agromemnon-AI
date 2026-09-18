@@ -147,6 +147,114 @@ agentcore status
 agentcore invoke "What can you do"
 ```
 
+## 11. Deploy the public HTTP API
+
+The web frontend does not call AgentCore directly — that needs AWS credentials, which a
+browser cannot hold. Instead `infra/api.yaml` deploys an API Gateway HTTP API in front of a
+Lambda that invokes the runtime and returns the reply as JSON, with CORS open to any origin.
+
+Pass the ARN of the runtime deployed in step 10 (`agentcore status` prints it):
+
+```bash
+aws cloudformation deploy \
+  --template-file infra/api.yaml \
+  --stack-name Agromemnon-api \
+  --region <same region as the runtime> \
+  --capabilities CAPABILITY_IAM \
+  --parameter-overrides AgentRuntimeArn=<runtime ARN>
+```
+
+The stack outputs the endpoint:
+
+```bash
+aws cloudformation describe-stacks --stack-name Agromemnon-api \
+  --query 'Stacks[0].Outputs' --output table
+```
+
+### Current Deployment
+
+The API is already deployed in `ap-south-1`. Call it with a prompt and a session id; reusing a session id continues that conversation:
+
+```bash
+# Simple greeting
+curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"Say hello in one sentence.","sessionId":"test-1"}'
+
+# Mandi price query
+curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"What is the mandi price of tomato in Tamil Nadu?","sessionId":"test-1"}'
+
+# Fertilizer recommendation (requires soil test data)
+curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"My soil test for banana in Karnataka shows N=250, P=60, K=300, OC=0.75%. What fertilizer should I use?","sessionId":"test-1"}'
+
+# Follow-up on same session (tests conversation memory)
+curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"What crop did I just ask about?","sessionId":"test-1"}'
+```
+
+Responses look like `{"response": "...", "sessionId": "...", "stopReason": "end_turn",
+"usage": {...}}`, and errors like `{"error": "..."}`. Things worth knowing before wiring up a
+frontend:
+
+- **The endpoint is unauthenticated.** Anyone with the URL can spend your Gemini quota. Add an
+  authorizer or an API key before putting it anywhere public.
+- **API Gateway gives up at 30 seconds**, which is a hard ceiling for HTTP APIs. A turn that
+  needs several tool calls can exceed it; the Lambda returns `504` with a clear message, or
+  `200` with `"truncated": true` if partial text arrived. For long turns, serve the agent over
+  a streaming transport (a Lambda response-streaming Function URL, or WebSockets) instead.
+- **One request at a time per session.** A second concurrent call with the same `sessionId`
+  is rejected with "Agent is already processing a request". Queue turns in the frontend.
+- **The deployed runtime needs `GEMINI_API_KEY` in its environment.** It is not in
+  `agentcore.json`, because that file is committed and the key is a secret. Set it on the
+  runtime after deploying:
+
+  ```bash
+  aws bedrock-agentcore-control update-agent-runtime --help  # see required args
+  ```
+
+  Note that `agentcore deploy` rewrites the runtime's environment from `agentcore.json`, so
+  re-apply the key after each deploy.
+
+## 12. Redeploy after code changes
+
+Changing agent/tool code (`app/Agromemnon/...`) or the runtime config (`agentcore/agentcore.json`)
+needs a redeploy for AWS to see it. `agentcore dev` (step 9) hot-reloads locally — it's the
+CLI's own deployment that doesn't.
+
+1. **Test locally first**: `agentcore dev`, hit the curl in step 9, confirm the change works.
+2. **Redeploy the runtime**:
+   ```bash
+   agentcore deploy
+   ```
+   This re-zips `app/Agromemnon/` and updates the CDK stack. It **overwrites the runtime's
+   environment variables with whatever is in `agentcore/agentcore.json`** — so `GEMINI_API_KEY`,
+   which lives only on the running runtime (see step 11), gets wiped every time. Re-apply it
+   immediately after:
+   ```bash
+   aws bedrock-agentcore-control update-agent-runtime \
+     --agent-runtime-id <id from `agentcore status`> \
+     --agent-runtime-artifact <copy from `get-agent-runtime` output> \
+     --role-arn <copy from `get-agent-runtime` output> \
+     --network-configuration <copy from `get-agent-runtime` output> \
+     --environment-variables MANDI_PRICES_TABLE=Agromemnon-mandi-prices,GEMINI_API_KEY=<your key>
+   ```
+   (`get-agent-runtime --agent-runtime-id <id>` prints the current artifact/role/network values
+   to copy — `update-agent-runtime` requires them even though you're only changing env vars.)
+   Until this fixes it permanently (Secrets Manager is the real fix — ask before redeploying
+   in the meantime if you want to avoid this step).
+3. **Check it came up**: `agentcore status`, then invoke it (step 9's curl, or step 11's
+   `/chat` endpoint if the API is already deployed).
+4. **The `/chat` API needs no redeploy** for agent code changes — it calls the runtime by ARN,
+   and the runtime keeps the same ARN across deploys (only its version number changes). Only
+   redeploy `infra/api.yaml` if you change the Lambda/API Gateway logic itself.
+5. **The mandi prices table (`infra/mandi-prices-table.yaml`) is separate from all of this** —
+   redeploy it only if you change the table's own schema, not for agent code changes.
+
 ## Reference
 
 - [AgentCore CLI](https://github.com/aws/agentcore-cli)
