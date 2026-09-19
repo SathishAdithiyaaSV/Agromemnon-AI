@@ -11,6 +11,19 @@ import { cn } from '@/lib/utils'
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
+/**
+ * Longest edge the photo is scaled down to before upload.
+ *
+ * A phone camera produces a 4000px 6 MB JPEG. As a base64 data URL that is 8 MB of
+ * request body, which has to cross API Gateway inside the same 30s the diagnosis
+ * itself needs, over the rural connection the farmer is actually on. 1280px is well
+ * above what the disease classifier sees (it centre-crops to 224px) and above what
+ * Bedrock keeps (it downsamples anything larger), so nothing downstream can tell the
+ * difference — it just arrives in a fraction of the time.
+ */
+const MAX_IMAGE_EDGE = 1280
+const JPEG_QUALITY = 0.85
+
 function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -18,6 +31,50 @@ function readAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error)
     reader.readAsDataURL(file)
   })
+}
+
+function loadImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('decode failed'))
+    img.src = dataUrl
+  })
+}
+
+/**
+ * Scale a photo down to MAX_IMAGE_EDGE and re-encode as JPEG.
+ *
+ * Returns the original data URL unchanged if the image is already small enough, or
+ * if anything in the canvas path fails — a browser that cannot do this should still
+ * be able to send the photo, just a slower one. Re-encoding also drops the EXIF
+ * block, and with it the GPS coordinates a phone writes into every picture: the
+ * agent is told the farmer's district from their profile and has no use for their
+ * exact location.
+ */
+async function shrinkImage(dataUrl: string): Promise<string> {
+  try {
+    const img = await loadImage(dataUrl)
+    const longest = Math.max(img.width, img.height)
+    if (!longest) return dataUrl
+    if (longest <= MAX_IMAGE_EDGE) return dataUrl
+
+    const scale = MAX_IMAGE_EDGE / longest
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(img.width * scale)
+    canvas.height = Math.round(img.height * scale)
+
+    const context = canvas.getContext('2d')
+    if (!context) return dataUrl
+    context.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+    const shrunk = canvas.toDataURL('image/jpeg', JPEG_QUALITY)
+    // A canvas that was never painted encodes to a tiny blank image. Treat an
+    // implausibly small result as a failure rather than uploading a white square.
+    return shrunk.length > 1024 ? shrunk : dataUrl
+  } catch {
+    return dataUrl
+  }
 }
 
 export function Composer({ autoFocus = false }: { autoFocus?: boolean }) {
@@ -85,7 +142,7 @@ export function Composer({ autoFocus = false }: { autoFocus?: boolean }) {
       return
     }
     try {
-      setImage(await readAsDataUrl(file))
+      setImage(await shrinkImage(await readAsDataUrl(file)))
     } catch {
       toast.error(t('chat.photoInvalid'))
     }

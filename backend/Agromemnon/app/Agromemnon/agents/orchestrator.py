@@ -7,14 +7,25 @@ from strands.agent.conversation_manager.summarizing_conversation_manager import 
 )
 
 import memory
-from agents import crop_agent, guardrails, irrigation_agent, scheme_adviser, video_tutor
+from agents import (
+    advice_agent,
+    crop_agent,
+    guardrails,
+    operations_agent,
+    plant_doctor,
+    video_tutor,
+)
 from model.load import load_model
 
 logger = logging.getLogger(__name__)
 
 # Add a new specialist by writing agents/<name>.py with a build(model) function and
 # listing its module here — the orchestrator exposes each one as a tool.
-SUB_AGENTS = (scheme_adviser, crop_agent, irrigation_agent, video_tutor)
+SUB_AGENTS = (advice_agent, crop_agent, operations_agent, video_tutor)
+
+# plant_doctor is built separately because it takes a photograph, which does not fit
+# through the string argument of an as_tool() call. See agents/plant_doctor.py.
+PHOTO_AGENTS = (plant_doctor,)
 
 # Skills are field procedure: the steps for diagnosing a sick crop, reading a soil
 # health card, scheduling irrigation, seeing a scheme application through. That
@@ -36,11 +47,20 @@ falls in, and to more than one when it spans several — a question about what t
 what it will sell for needs both the crop and the price specialist.
 
 Which specialist covers what:
-- crop_agent: what to grow, sowing and harvest timing, fertilizer and manure doses, soil
-  nutrients, and mandi prices.
-- irrigation_agent: when and how much to irrigate, and soil water-holding capacity.
-- scheme_adviser: government schemes, subsidies, eligibility and how to apply.
+- crop_agent: what to grow. Crop choice for the season, whether a crop suits the area's soil
+  and season, and whether to switch crop.
+- operations_agent: day-to-day field work on a crop already growing. Fertilizer and manure
+  doses, irrigation timing, soil nutrient status, and sowing, spraying and harvest windows.
+- advice_agent: money and markets. Government schemes, subsidies, insurance and loans and
+  how to apply; and mandi prices, which mandi pays best, and whether to sell now or wait.
+- plant_doctor: diagnoses disease from an attached photograph and gives the treatment.
 - video_tutor: finds one YouTube video showing how to do something.
+
+The three subject specialists divide cleanly: crop_agent decides what to plant,
+operations_agent decides what to do to a crop already in the ground, advice_agent decides
+money. A farmer asking what to grow and what it will sell for needs crop_agent and
+advice_agent. A farmer asking how much urea to apply and whether a subsidy covers it needs
+operations_agent and advice_agent.
 
 Answer directly, without calling a specialist, only for greetings, thanks, a farmer asking
 what you can do, and out-of-scope requests. Everything else about farming goes to a
@@ -60,12 +80,36 @@ Never mention specialists, tools, routing or internal steps. The farmer is talki
 adviser. If a specialist reports that data was unavailable, pass that on plainly as your own
 answer rather than describing what went wrong inside the system.
 
+WHEN THE FARMER SENDS A PHOTO.
+
+A message carrying a photo reference — a token like `img_7f3a2b1c` — means the farmer has
+attached a picture of their plant. Call plant_doctor, passing the reference exactly as it
+appears, character for character. Do not reword it, shorten it or invent one; a reference
+you made up resolves to nothing and the farmer gets no diagnosis.
+
+In the same `question` argument, write out everything plant_doctor needs, because it cannot
+see this conversation: what the farmer asked, the crop and variety if they named one, how
+long the problem has been going on, and their district and state.
+
+A photo of a plant is a plant_doctor question even when the farmer sends no words with it.
+If the message has a photo reference and also asks about something else — a price, a scheme
+— call plant_doctor and the other specialist together.
+
+Call plant_doctor at most once per photo. If it replies that the photo was unusable, pass
+its request for a better photo on to the farmer; do not call it again with the same
+reference.
+
 WHEN TO ADD A VIDEO.
 
 When the farmer asks how to *do* something — treat a disease or pest, use a technique, apply
 for a scheme — call video_tutor in the same turn as the specialist, so the search runs while
 the specialist answers. Skip it for greetings, small talk, and anything answered by a single
 number or fact, such as a mandi price or a weather forecast.
+
+A diagnosed disease always counts as "how to do something". When you call plant_doctor, call
+video_tutor in the same turn. You will not know the disease name yet, so search on what the
+farmer described and the crop — "tomato leaf disease spray treatment" — and let the
+specialist's answer supply the detail.
 
 Write your own answer first and in full; the video supports it, it does not replace it. Then,
 if video_tutor returned a link, close with the link on its own line under a
@@ -113,6 +157,9 @@ def build(context) -> Agent:
     if skill_paths:
         plugins.append(AgentSkills(skills=skill_paths))
 
+    tools = [module.build(model).as_tool() for module in SUB_AGENTS]
+    tools += [module.build_tool(module.build(model)) for module in PHOTO_AGENTS]
+
     return Agent(
         name="orchestrator",
         # Stable so a restored session reattaches to the same agent record rather
@@ -121,7 +168,7 @@ def build(context) -> Agent:
         description="Routes farmer questions to the specialist agents and combines their answers.",
         model=model,
         system_prompt=guardrails.compose(ROLE, DUTIES, *extra_prompts),
-        tools=[module.build(model).as_tool() for module in SUB_AGENTS],
+        tools=tools,
         plugins=plugins,
         session_manager=session_manager,
         memory_manager=memory_manager,

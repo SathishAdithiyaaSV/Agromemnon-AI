@@ -118,6 +118,16 @@ Resources:
       #     stalls while the turn as a whole runs past the 30s gateway limit.
       #   * The exception detail is logged, not returned: it reached the browser before
       #     and carried internals with it.
+      #   * An optional "image" data URL is forwarded to the runtime untouched. It is
+      #     deliberately not validated here: app/Agromemnon/image_store.py already
+      #     checks the format and size, and it can answer a bad upload as the adviser
+      #     ("send it again as a JPEG") instead of a bare 400 the farmer never sees.
+      #     Oversized bodies are API Gateway's job — it rejects above 10 MB itself.
+      #   * A photo may arrive with no words at all — the composer lets a farmer send
+      #     just a picture — so an empty prompt is valid when "image" is present.
+      #   * This source is ~15 characters under Lambda's 4096 inline cap. `prof` is
+      #     named short for that reason alone. The next addition here does not fit:
+      #     move the handler to an S3 artifact rather than shortening prose further.
       Code:
         ZipFile: |
           import hashlib
@@ -180,21 +190,23 @@ Resources:
                   body = None
               if not isinstance(body, dict):
                   return _reply(400, {"error": "Body must be a JSON object."})
-              prompt = body.get("prompt")
-              if not isinstance(prompt, str) or not prompt.strip():
-                  return _reply(400, {"error": "Provide a non-empty 'prompt'."})
+              prompt = body.get("prompt", "")
+              img = body.get("image")
+              img = img if type(img) is str else None
+              if not isinstance(prompt, str) or not (prompt.strip() or img):
+                  return _reply(400, {"error": "Need a 'prompt' or 'image'."})
 
               session_id = _session_id(body.get("sessionId"))
-              payload = {"prompt": prompt}
+              payload = {"prompt": prompt, **({"image": img} if img else {})}
               auth = (event.get("requestContext") or {}).get("authorizer") or {}
               claims = (auth.get("jwt") or {}).get("claims") or {}
               if claims.get("sub"):
                   payload["actorId"] = claims["sub"]
-              profile = {f: claims.get(f) or claims.get("custom:" + f)
-                         for f in ("name", "state", "district", "language", "age")}
-              profile = {k: v for k, v in profile.items() if v}
-              if profile:
-                  payload["profile"] = profile
+              prof = {f: claims.get(f) or claims.get("custom:" + f)
+                      for f in ("name", "state", "district", "language", "age")}
+              prof = {k: v for k, v in prof.items() if v}
+              if prof:
+                  payload["profile"] = prof
 
               left = context.get_remaining_time_in_millis() / 1000 if context else 29
               deadline = time.monotonic() + max(left - 3, 5)
@@ -206,7 +218,7 @@ Resources:
                   )
                   answer, stop, usage, error, cut = _collect(response["response"], deadline)
               except client.exceptions.ThrottlingException:
-                  return _reply(429, {"error": "The agent is busy. Retry shortly.", "sessionId": session_id})
+                  return _reply(429, {"error": "Agent busy; retry shortly.", "sessionId": session_id})
               except Exception as exc:
                   print(f"invoke failed: {exc!r}")
                   return _reply(502, {"error": "The agent could not be reached.", "sessionId": session_id})
@@ -299,7 +311,7 @@ Outputs:
     Value: !GetAtt HttpApi.ApiEndpoint
 
   ChatEndpoint:
-    Description: 'POST here with a JSON body: {"prompt": "...", "sessionId": "..."}'
+    Description: 'POST JSON: {"prompt": "...", "sessionId": "...", "image": "data:image/jpeg;base64,..."}; image is optional.'
     Value: !Sub '${HttpApi.ApiEndpoint}/chat'
 
   FunctionName:

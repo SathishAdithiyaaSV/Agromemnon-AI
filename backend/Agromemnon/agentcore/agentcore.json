@@ -40,6 +40,22 @@
         {
           "name": "GEMINI_API_KEY_SECRET",
           "value": "Agromemnon/gemini-api-key"
+        },
+        {
+          "name": "LEAF_DISEASE_ENDPOINT",
+          "value": "agromemnon-leaf-disease"
+        },
+        {
+          "name": "LEAF_DISEASE_REGION",
+          "value": "us-east-1"
+        },
+        {
+          "name": "VISION_MODEL_ID",
+          "value": "us.anthropic.claude-sonnet-4-6"
+        },
+        {
+          "name": "VISION_MODEL_REGION",
+          "value": "us-east-1"
         }
       ],
       "additionalPolicies": [
@@ -47,7 +63,9 @@
         "policies/dynamodb-soil-nutrients.json",
         "policies/bedrock-scheme-kb.json",
         "policies/agentcore-memory.json",
-        "policies/gemini-api-key.json"
+        "policies/gemini-api-key.json",
+        "policies/sagemaker-leaf-disease.json",
+        "policies/bedrock-vision-model.json"
       ]
     }
   ],

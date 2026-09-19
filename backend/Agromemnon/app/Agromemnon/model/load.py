@@ -25,9 +25,10 @@ import json
 import os
 from functools import lru_cache
 
+from strands.models.bedrock import BedrockModel
 from strands.models.gemini import GeminiModel
 
-MODEL_ID = "gemini-3.6-flash"
+MODEL_ID = "gemini-3.1-flash-lite"
 
 
 @lru_cache(maxsize=1)
@@ -68,3 +69,37 @@ def _api_key() -> str:
 
 def load_model() -> GeminiModel:
     return GeminiModel(model_id=MODEL_ID, client_args={"api_key": _api_key()})
+
+
+# Cross-region inference profile, not the bare foundation-model id: Anthropic models
+# on Bedrock are only invocable through a profile, and the `us.` prefix lets the
+# request serve from any US region when us-east-1 is throttling.
+#
+# Sonnet 4.6 rather than Opus 5 only because the deployment account has model access
+# for the 4.x family and not the 5 family — Opus 5 returns AccessDenied today. Both
+# are vision-capable and the IAM policy already grants both, so granting access in
+# the Bedrock console and setting VISION_MODEL_ID=us.anthropic.claude-opus-5 is the
+# whole switch.
+VISION_MODEL_ID = os.environ.get("VISION_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+VISION_MODEL_REGION = os.environ.get("VISION_MODEL_REGION", "us-east-1")
+
+
+def load_vision_model() -> BedrockModel:
+    """Bedrock Claude for the agents that have to look at a photograph.
+
+    Separate from load_model() because the two jobs have different requirements.
+    The text agents run on a small fast model many times per turn; reading a leaf
+    photograph, weighing it against a classifier's confidence score and deciding
+    whether the two agree is the one judgement call in this system where a weaker
+    model produces a confidently wrong diagnosis a farmer then sprays for.
+
+    Bedrock also keeps the image inside AWS: the photo goes from the runtime to
+    Bedrock in the same account and region, and never to a third-party API.
+    """
+    return BedrockModel(
+        model_id=VISION_MODEL_ID,
+        region_name=VISION_MODEL_REGION,
+        # The diagnosis plus treatment runs long in Hindi or Kannada, where the
+        # script costs more tokens per word than English.
+        max_tokens=2048,
+    )

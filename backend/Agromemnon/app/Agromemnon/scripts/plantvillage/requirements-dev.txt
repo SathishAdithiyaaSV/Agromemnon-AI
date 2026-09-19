@@ -1,0 +1,6 @@
+# Offline tooling for training and deploying the leaf disease classifier.
+# Deliberately NOT in the agent's pyproject.toml: the SageMaker SDK and its
+# transitive dependencies add well over 100 MB to a deployment zip that has a
+# strict upload budget, and nothing at agent runtime imports them.
+sagemaker>=2.230.0
+boto3>=1.34.0

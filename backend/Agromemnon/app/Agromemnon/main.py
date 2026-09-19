@@ -5,6 +5,8 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from agents.orchestrator import build as build_orchestrator
 from memory.context import RequestContext
 
+import image_store
+
 app = BedrockAgentCoreApp()
 log = app.logger
 
@@ -71,6 +73,45 @@ def strip_trailing_tool_use(messages: Any) -> list[dict]:
     return messages
 
 
+# What the orchestrator is told when a photo comes in. The bytes stay in
+# image_store and only this reference reaches the model — see image_store for why.
+PHOTO_NOTE = (
+    "[The farmer attached a photo of their plant. Photo reference: {reference}. "
+    "Pass this reference to plant_doctor exactly as written.]"
+)
+
+
+def _attach_image(payload: dict, prompt):
+    """Store an attached photo and fold its reference into the prompt text.
+
+    Only a plain string prompt is augmented. A caller supplying a full message
+    history is driving the conversation itself and can place the reference where it
+    wants it; quietly rewriting the tail of someone else's history would be worse
+    than ignoring the field.
+    """
+    image = payload.get("image")
+    if image is None:
+        return prompt
+    if not isinstance(prompt, str):
+        log.warning("ignoring 'image' on a request that supplied its own message history")
+        return prompt
+
+    try:
+        reference = image_store.store_data_url(image)
+    except image_store.ImageTooLarge as error:
+        log.warning("rejected oversized upload: %s", error)
+        return (prompt + "\n\n[The farmer tried to attach a photo but it was too large to "
+                         "read. Ask them to send a smaller one.]").strip()
+    except image_store.UnsupportedImage as error:
+        log.warning("rejected unreadable upload: %s", error)
+        return (prompt + "\n\n[The farmer tried to attach a photo but it could not be read. "
+                         "Ask them to send it again as a JPEG or PNG.]").strip()
+
+    log.info("stored uploaded photo as %s", reference)
+    note = PHOTO_NOTE.format(reference=reference)
+    return f"{prompt}\n\n{note}" if prompt else note
+
+
 def _extract_prompt(payload: dict):
     """Accept validated harness messages, tool results, or a plain prompt string."""
     if not isinstance(payload, dict):
@@ -95,6 +136,11 @@ def _extract_prompt(payload: dict):
     return prompt
 
 
+def _prompt_for(payload: dict):
+    """The prompt the agent runs on, with any attached photo registered."""
+    return _attach_image(payload, _extract_prompt(payload))
+
+
 @app.entrypoint
 async def invoke(payload, context):
     log.info("Invoking Agent.....")
@@ -106,7 +152,7 @@ async def invoke(payload, context):
     request = RequestContext.from_payload(payload, session_id)
     agent = await get_or_create_agent(request)
 
-    prompt = _extract_prompt(payload)
+    prompt = _prompt_for(payload)
 
     async for event in agent.stream_async(
         prompt,

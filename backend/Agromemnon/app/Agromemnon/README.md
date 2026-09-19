@@ -24,6 +24,54 @@ invoking the agent.
 | Variable | Required | Description |
 | --- | --- | --- |
 | `LOCAL_DEV` | No | Set to `1` to use `.env.local` instead of AgentCore Identity |
+| `LEAF_DISEASE_ENDPOINT` | No | SageMaker endpoint for the leaf disease classifier (default `agromemnon-leaf-disease`) |
+| `LEAF_DISEASE_REGION` | No | Region that endpoint lives in (default `us-east-1`) |
+| `VISION_MODEL_ID` | No | Bedrock inference profile for `plant_doctor` (default `us.anthropic.claude-sonnet-4-6`) |
+| `VISION_MODEL_REGION` | No | Region for the Bedrock vision call (default `us-east-1`) |
+
+# Photo diagnosis
+
+A farmer can attach a photo of a diseased leaf and get a diagnosis with its treatment.
+Three pieces cooperate:
+
+1. **`image_store.py`** takes the uploaded data URL, validates and stores the bytes,
+   and returns a short reference such as `img_7f3a2b1c`. The bytes never enter any
+   model's context — an `Agent.as_tool()` call carries a JSON string, and routing a
+   megabyte of base64 through it would mean the orchestrator's model emitting the
+   whole image token by token.
+2. **`agents/plant_doctor.py`** is the specialist. It runs on Bedrock Claude (vision),
+   resolves the reference to real pixels, and reads the photo itself.
+3. **`tools/leaf_disease.py`** sends the same photo to a SageMaker endpoint running a
+   MobileNetV3-Small trained on the PlantVillage tomato subset, and returns the top
+   classes with confidence plus the treatment record for the winner.
+
+The two readings are deliberately independent. The classifier is accurate on the ten
+tomato classes and blind to everything else — given a chilli leaf it still returns a
+tomato disease, confidently. Claude's reading of the image is what catches that, and
+the prompt makes the agent reconcile the two and say when they disagree.
+
+Treatments come from `tools/leaf_disease_treatments.py`, not from the model. The
+shared guardrails forbid stating a figure that did not come from a tool result, and a
+spray dose is exactly the number a farmer acts on without checking.
+
+## Prerequisites for the photo path
+
+| What | How |
+| --- | --- |
+| The trained endpoint | Follow `scripts/plantvillage/README.md` |
+| Bedrock model access | **The Anthropic use case details form must be submitted for the AWS account.** Until it is, every Claude model returns `ResourceNotFoundException: Model use case details have not been submitted`. Fill it in at Bedrock console → Model access. |
+
+Both fail soft. With no endpoint the agent tells the farmer it could not analyse the
+photo instead of guessing; with no Bedrock access the `plant_doctor` tool call errors
+and the rest of the assistant keeps working.
+
+## Trying it
+
+```bash
+agentcore invoke --dev '{"prompt": "what is wrong with my tomato plant?", "image": "data:image/jpeg;base64,..."}'
+```
+
+The HTTP API accepts the same `image` field — see `infra/api.yaml`.
 
 # Developing locally
 

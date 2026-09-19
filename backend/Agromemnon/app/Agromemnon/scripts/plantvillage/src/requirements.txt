@@ -1,0 +1,3 @@
+# The SageMaker PyTorch containers already ship torch, torchvision and pillow.
+# Left intentionally empty of pins so the container's tested versions win; add a
+# line here only for a dependency the container genuinely lacks.
