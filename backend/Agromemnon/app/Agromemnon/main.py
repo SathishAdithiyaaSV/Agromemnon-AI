@@ -141,6 +141,92 @@ def _prompt_for(payload: dict):
     return _attach_image(payload, _extract_prompt(payload))
 
 
+# Nova emits its routing deliberation as literal "<thinking>...</thinking>" text in the
+# reply stream, so without this the farmer's answer opens with the model explaining which
+# specialist it is about to call. guardrails.FORMAT also forbids it, but that is a prompt
+# rule shaping a cooperative model — the same reason guardrails.py gives for putting
+# anything that must not happen into code. This is that code.
+OPEN_TAG = "<thinking>"
+CLOSE_TAG = "</thinking>"
+
+
+def _partial_tag_len(buffer: str, tag: str) -> int:
+    """Length of the buffer's tail that could still grow into `tag`.
+
+    A tag can be split across two deltas ("<thin" + "king>"), so a tail that is a proper
+    prefix of the tag is held back rather than emitted; anything else would print half a
+    tag and then swallow the rest.
+    """
+    for size in range(min(len(tag) - 1, len(buffer)), 0, -1):
+        if tag.startswith(buffer[-size:]):
+            return size
+    return 0
+
+
+class ThinkingFilter:
+    """Removes <thinking> spans from a stream of text deltas.
+
+    Stateful because the tags and the text between them arrive in arbitrary chunks. Feed
+    every delta through `feed()` and call `flush()` once the stream ends, which releases a
+    tail that turned out not to be the start of a tag after all.
+    """
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._inside = False
+
+    def feed(self, text: str) -> str:
+        self._buffer += text
+        out = []
+        while True:
+            if self._inside:
+                end = self._buffer.find(CLOSE_TAG)
+                if end == -1:
+                    # Keep only what might be a partial closing tag; the rest is
+                    # deliberation and is dropped.
+                    self._buffer = self._buffer[len(self._buffer) - _partial_tag_len(self._buffer, CLOSE_TAG):]
+                    break
+                self._buffer = self._buffer[end + len(CLOSE_TAG):]
+                self._inside = False
+                continue
+
+            start = self._buffer.find(OPEN_TAG)
+            if start == -1:
+                hold = _partial_tag_len(self._buffer, OPEN_TAG)
+                if hold:
+                    out.append(self._buffer[:-hold])
+                    self._buffer = self._buffer[-hold:]
+                else:
+                    out.append(self._buffer)
+                    self._buffer = ""
+                break
+
+            out.append(self._buffer[:start])
+            self._buffer = self._buffer[start + len(OPEN_TAG):]
+            self._inside = True
+        return "".join(out)
+
+    def flush(self) -> str:
+        """Release a held-back tail that never became a tag."""
+        if self._inside:
+            return ""
+        tail, self._buffer = self._buffer, ""
+        return tail
+
+
+def _delta_text(event: dict):
+    """The text of a contentBlockDelta event, or None if it is some other event."""
+    delta = (event.get("event") or {}).get("contentBlockDelta")
+    if not isinstance(delta, dict):
+        return None
+    text = (delta.get("delta") or {}).get("text")
+    return text if isinstance(text, str) else None
+
+
+def _text_event(text: str) -> dict:
+    return {"event": {"contentBlockDelta": {"delta": {"text": text}}}}
+
+
 @app.entrypoint
 async def invoke(payload, context):
     log.info("Invoking Agent.....")
@@ -154,6 +240,8 @@ async def invoke(payload, context):
 
     prompt = _prompt_for(payload)
 
+    thinking = ThinkingFilter()
+
     async for event in agent.stream_async(
         prompt,
     ):
@@ -162,7 +250,20 @@ async def invoke(payload, context):
         cbs = event["event"].get("contentBlockStart")
         if cbs is not None and not cbs.get("start"):
             continue
-        yield event
+
+        text = _delta_text(event)
+        if text is None:
+            yield event
+            continue
+        # A delta that was entirely deliberation yields nothing rather than an empty
+        # delta, which a consumer counting chunks would otherwise see as output.
+        kept = thinking.feed(text)
+        if kept:
+            yield _text_event(kept)
+
+    tail = thinking.flush()
+    if tail:
+        yield _text_event(tail)
 
 
 if __name__ == "__main__":

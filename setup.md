@@ -142,8 +142,7 @@ for their soil test values rather than failing.
 
 ## 7. Configure secrets / local env
 
-Local secrets go in `agentcore/.env.local` (gitignored). The agent's model provider
-(`app/Agromemnon/model/load.py`) uses Google Gemini, so that file needs:
+Local secrets go in `agentcore/.env.local` (gitignored):
 
 ```bash
 LOCAL_DEV=1
@@ -153,6 +152,51 @@ GEMINI_API_KEY=<your key>
 `LOCAL_DEV=1` makes the agent read from this file instead of AgentCore Identity when running
 locally. Set `MANDI_PRICES_TABLE` here too if your table name differs from the default
 `Agromemnon-mandi-prices`.
+
+The Gemini key is optional now — see step 7a for why.
+
+## 7a. Models: Bedrock primary, Gemini fallback
+
+`app/Agromemnon/model/load.py` builds a Strands `ModelRouter` with two candidates, so a
+Bedrock throttle or outage moves the turn onto Gemini mid-conversation instead of losing
+it:
+
+| Role | Model | Set by |
+| --- | --- | --- |
+| Primary (text) | `us.amazon.nova-pro-v1:0` on Bedrock | `TEXT_MODEL_ID`, `TEXT_MODEL_REGION` |
+| Fallback (text) | `gemini-3.1-flash-lite` | `GEMINI_MODEL_ID` + a key |
+| Vision (`plant_doctor`) | `us.amazon.nova-pro-v1:0` on Bedrock | `VISION_MODEL_ID`, `VISION_MODEL_REGION` |
+
+Bedrock leads because it is IAM-authorized by the runtime's execution role rather than a
+shared API key, and the farmer's question never leaves AWS. Gemini stays because a
+single-provider agent is down whenever that provider is. Vision has no Gemini fallback on
+purpose: the photo is the farmer's own field and stays inside AWS.
+
+**A missing Gemini key is not fatal.** The agent logs a warning and runs on Bedrock alone.
+It is only the fallback.
+
+**Why Nova and not Claude.** Claude on Bedrock requires the Anthropic use-case details form
+to be submitted for the account, and account `222758971755` has not submitted it — every
+`us.anthropic.*` model id returns `ResourceNotFoundException` ("Model use case details have
+not been submitted for this account"). Submit it at Bedrock console → Model access, wait
+~15 minutes, then switch by setting `TEXT_MODEL_ID` / `VISION_MODEL_ID` to
+`us.anthropic.claude-sonnet-4-6` and adding the matching ARNs to
+`app/Agromemnon/policies/bedrock-text-model.json`. No code change is needed.
+
+### The deployed Gemini key
+
+The runtime reads the key from Secrets Manager, not from an environment variable — an
+AgentCore runtime's env vars are plain text in the deployed config, so a key put there is a
+key committed to the repo that produced it. Create it once:
+
+```bash
+aws secretsmanager create-secret --name Agromemnon/gemini-api-key \
+  --secret-string '<your key>' --region us-east-1
+```
+
+`GEMINI_API_KEY_SECRET=Agromemnon/gemini-api-key` in `agentcore.json` points at it, and
+`app/Agromemnon/policies/gemini-api-key.json` grants the runtime role `GetSecretValue`.
+Rotating the key is `put-secret-value` with no redeploy.
 
 ## 8. Validate the configuration
 
@@ -219,83 +263,56 @@ aws cloudformation describe-stacks --stack-name Agromemnon-api \
 
 ### Current Deployment
 
-The API is already deployed in `ap-south-1`. It now requires a Cognito ID token (see
-step 12), so every call needs an `Authorization` header. Grab a token for an existing
-account with:
+Live in **`us-east-1`, account `222758971755`**, deployment target **`main`**
+(CloudFormation stack `AgentCore-Agromemnon-main`). The older `ap-south-1` /
+`879835157388` deployment this guide used to describe is gone — ignore any
+`ap-south-1` identifier you find in an old note.
+
+The endpoint is currently **open** (no Cognito token required), so a plain curl
+works. Step 12 explains how to lock it down and what that buys.
 
 ```bash
-TOKEN=$(aws cognito-idp admin-initiate-auth \
-  --user-pool-id ap-south-1_Td2koDmlX \
-  --client-id 5htao3dkmjb05rog7gs3kd7883 \
-  --auth-flow ADMIN_USER_PASSWORD_AUTH \
-  --auth-parameters USERNAME=<email>,PASSWORD=<password> \
-  --query 'AuthenticationResult.IdToken' --output text)
-```
+API=https://4j0jww3atb.execute-api.us-east-1.amazonaws.com/chat
 
-That flow is not enabled on the web client, so either enable
-`ALLOW_ADMIN_USER_PASSWORD_AUTH` on it temporarily or read a token out of the
-frontend (it is in `localStorage` under a `CognitoIdentityServiceProvider.*.idToken`
-key after signing in).
-
-Then call it with a prompt and a session id; reusing a session id continues that
-conversation:
-
-```bash
 # Simple greeting
-curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $TOKEN" \
+curl -X POST $API -H 'Content-Type: application/json' \
   -d '{"prompt":"Say hello in one sentence.","sessionId":"test-1"}'
 
 # Mandi price query
-curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $TOKEN" \
+curl -X POST $API -H 'Content-Type: application/json' \
   -d '{"prompt":"What is the mandi price of tomato in Tamil Nadu?","sessionId":"test-1"}'
 
 # Fertilizer recommendation from location alone (no soil test needed)
-curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $TOKEN" \
+curl -X POST $API -H 'Content-Type: application/json' \
   -d '{"prompt":"I grow banana in Badami taluk, Bagalkote district, Karnataka. What fertilizer should I apply? I have never had my soil tested.","sessionId":"test-1"}'
 
-# Same question from a farmer who does have a Soil Health Card; their measured
-# values override the area survey.
-curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"prompt":"My soil test for banana in Bagalkote, Karnataka shows N=250, P=60, K=300, OC=0.75%. What fertilizer should I use?","sessionId":"test-1"}'
-
-# Follow-up on same session (tests conversation memory)
-curl -X POST https://ap3oa5cz06.execute-api.ap-south-1.amazonaws.com/chat \
-  -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $TOKEN" \
+# Follow-up on the same session (tests conversation memory)
+curl -X POST $API -H 'Content-Type: application/json' \
   -d '{"prompt":"What crop did I just ask about?","sessionId":"test-1"}'
+
+# A photo question: "image" is an optional data URL alongside (or instead of) a prompt.
+curl -X POST $API -H 'Content-Type: application/json' \
+  -d "{\"prompt\":\"What is wrong with this leaf?\",\"sessionId\":\"test-1\",\"image\":\"data:image/jpeg;base64,$(base64 -w0 leaf.jpg)\"}"
 ```
 
 Responses look like `{"response": "...", "sessionId": "...", "stopReason": "end_turn",
 "usage": {...}}`, and errors like `{"error": "..."}`. Things worth knowing before wiring up a
 frontend:
 
-- **The endpoint requires a Cognito ID token** (step 12). Without one API Gateway
-  returns `401` before the Lambda runs. Anyone with an account in the pool can still
-  spend your Gemini quota, so keep self-sign-up off the pool if that matters.
+- **The endpoint is open.** Anyone who has the URL can spend your Bedrock and Gemini
+  quota. It also means the Lambda sees no Cognito claims, so it sets no `actorId` and
+  every caller is anonymous — which is what long-term per-farmer memory would key on.
+  Step 12 turns this on.
 - **API Gateway gives up at 30 seconds**, which is a hard ceiling for HTTP APIs. A turn that
   needs several tool calls can exceed it; the Lambda returns `504` with a clear message, or
   `200` with `"truncated": true` if partial text arrived. For long turns, serve the agent over
   a streaming transport (a Lambda response-streaming Function URL, or WebSockets) instead.
 - **One request at a time per session.** A second concurrent call with the same `sessionId`
   is rejected with "Agent is already processing a request". Queue turns in the frontend.
-- **The deployed runtime needs `GEMINI_API_KEY` in its environment.** It is not in
-  `agentcore.json`, because that file is committed and the key is a secret. Set it on the
-  runtime after deploying:
-
-  ```bash
-  aws bedrock-agentcore-control update-agent-runtime --help  # see required args
-  ```
-
-  Note that `agentcore deploy` rewrites the runtime's environment from `agentcore.json`, so
-  re-apply the key after each deploy.
+- **The Gemini key is no longer an env var you re-apply by hand.** It lives in Secrets
+  Manager as `Agromemnon/gemini-api-key`, and the runtime reads it at startup via the
+  `GEMINI_API_KEY_SECRET` env var in `agentcore.json` (see step 7a). `agentcore deploy`
+  no longer wipes it.
 
 ## 12. Deploy the Cognito user pool and lock the API down
 
@@ -331,8 +348,15 @@ aws cloudformation deploy \
     UserPoolClientId=<UserPoolClientId output>
 ```
 
-The stack's `AuthMode` output reports which mode it ended up in. Already deployed in
-`ap-south-1`: pool `ap-south-1_Td2koDmlX`, client `5htao3dkmjb05rog7gs3kd7883`.
+The stack's `AuthMode` output reports which mode it ended up in. Deployed in
+`us-east-1`: pool `us-east-1_AAtqwAUR4`, client `3k98p1aqfj4qimsjv871t58k5u`.
+
+**The API is currently deployed open** — it was last deployed without these two
+parameters, so `AuthMode` reads `NONE (open endpoint)`. The pool exists and the frontend
+signs farmers in against it, but API Gateway does not check the token. The cost of that is
+not only an open endpoint: the Lambda derives `actorId` from verified Cognito claims, so
+with auth off no `actorId` is set and every caller is anonymous. Pass both parameters above
+to turn it on.
 
 ## 13. Run the web frontend
 
@@ -360,36 +384,62 @@ CLI's own deployment that doesn't.
 1. **Test locally first**: `agentcore dev`, hit the curl in step 9, confirm the change works.
 2. **Redeploy the runtime**:
    ```bash
-   agentcore deploy -y --target personal
+   agentcore deploy -y --target main
    ```
-   The target name matters. The CLI derives the CloudFormation stack name from it, and the
-   live deployment is `AgentCore-Agromemnon-personal` in account `879835157388`
-   (`ap-south-1`). Deploying under a different target name builds a **second, parallel**
-   runtime instead of updating the running one, so keep the `personal` target in
-   `agentcore/aws-targets.json` pointed at this account.
-   This re-zips `app/Agromemnon/` and updates the CDK stack. It **overwrites the runtime's
-   environment variables with whatever is in `agentcore/agentcore.json`** — so `GEMINI_API_KEY`,
-   which lives only on the running runtime (see step 11), gets wiped every time. Re-apply it
-   immediately after:
+   **The target name matters.** The CLI derives the CloudFormation stack name from it, and
+   the live deployment is `AgentCore-Agromemnon-main` in account `222758971755`
+   (`us-east-1`). Deploying under a different target name builds a **second, parallel**
+   runtime instead of updating the running one — which is how the dead
+   `AgentCore-Agromemnon-personal` stack in `879835157388` came about. `agentcore status`
+   with no `--target` defaults to `personal` and reports a confusing cross-account error;
+   pass `--target main` to it too.
+
+   This re-zips `app/Agromemnon/` and updates the CDK stack. It overwrites the runtime's
+   environment variables with whatever is in `agentcore/agentcore.json` — which is now
+   harmless, because the only secret involved lives in Secrets Manager (step 7a) rather
+   than in the runtime environment.
+3. **Check the deploy actually succeeded.** `agentcore deploy` can print
+   `CDK deploy failed: ...` and still **exit 0**, so a pipeline that only checks the exit
+   code will call a rollback a success. Confirm against CloudFormation:
    ```bash
-   aws bedrock-agentcore-control update-agent-runtime \
-     --agent-runtime-id <id from `agentcore status`> \
-     --agent-runtime-artifact <copy from `get-agent-runtime` output> \
-     --role-arn <copy from `get-agent-runtime` output> \
-     --network-configuration <copy from `get-agent-runtime` output> \
-     --environment-variables MANDI_PRICES_TABLE=Agromemnon-mandi-prices,SOIL_NUTRIENTS_TABLE=Agromemnon-soil-nutrients,GEMINI_API_KEY=<your key>
+   aws cloudformation describe-stacks --stack-name AgentCore-Agromemnon-main \
+     --region us-east-1 --query 'Stacks[0].StackStatus' --output text
+   # UPDATE_COMPLETE is good; UPDATE_ROLLBACK_COMPLETE means nothing shipped.
+   agentcore status --target main
    ```
-   (`get-agent-runtime --agent-runtime-id <id>` prints the current artifact/role/network values
-   to copy — `update-agent-runtime` requires them even though you're only changing env vars.)
-   Until this fixes it permanently (Secrets Manager is the real fix — ask before redeploying
-   in the meantime if you want to avoid this step).
-3. **Check it came up**: `agentcore status`, then invoke it (step 9's curl, or step 11's
-   `/chat` endpoint if the API is already deployed).
-4. **The `/chat` API needs no redeploy** for agent code changes — it calls the runtime by ARN,
+   A failed resource rolls back the **whole** stack, so one blocked resource keeps
+   unrelated code changes off the runtime (see Known gaps).
+4. **Then invoke it**: step 9's curl, or step 11's `/chat` endpoint.
+5. **The `/chat` API needs no redeploy** for agent code changes — it calls the runtime by ARN,
    and the runtime keeps the same ARN across deploys (only its version number changes). Only
    redeploy `infra/api.yaml` if you change the Lambda/API Gateway logic itself.
-5. **The mandi prices table (`infra/mandi-prices-table.yaml`) is separate from all of this** —
-   redeploy it only if you change the table's own schema, not for agent code changes.
+6. **The data tables (`infra/mandi-prices-table.yaml`, `infra/soil-nutrients-table.yaml`)
+   are separate from all of this** — redeploy them only if you change a table's own schema,
+   not for agent code changes.
+
+## Known gaps in the current deployment
+
+Three things are declared in the repo but not working in AWS. Each degrades rather than
+failing the turn, which is why the agent still answers.
+
+- **AgentCore Memory is blocked at the account level.** `CreateMemory` returns
+  `AccessDeniedException: "Access Denied during CreateMemory: Unable to perform operation.
+  Contact customer support for assistance."` for account `222758971755`, even with admin
+  credentials — it is an AWS entitlement, not an IAM policy gap. Because a failed resource
+  rolls back the entire stack, the `AgromemnonFarmerMemory` resource was parked in
+  `agentcore/memories.blocked.json` and `agentcore.json` now declares `"memories": []`.
+  Nothing was lost: it had never deployed successfully. To restore it, raise an AWS support
+  case to enable AgentCore Memory, then paste the parked array back into `agentcore.json`
+  and redeploy. `AGENTCORE_MEMORY_NAME` is deliberately left set, so the code picks the
+  memory up as soon as it exists; until then it logs `No AgentCore Memory named ... found;
+  memory disabled` and runs without long-term recall.
+- **The leaf-disease SageMaker endpoint does not exist.** `LEAF_DISEASE_ENDPOINT` points at
+  `agromemnon-leaf-disease`, and `list-endpoints` in `us-east-1` is empty, so the
+  `leaf_disease` classifier tool cannot be called. `plant_doctor` still diagnoses from the
+  photo using the vision model alone — it just loses the classifier's second opinion.
+  Create it with `app/Agromemnon/scripts/plantvillage/deploy_endpoint.py`.
+- **Anthropic models are not available to the account** — see step 7a. This is why the
+  vision model is Nova rather than Claude.
 
 ## Reference
 
