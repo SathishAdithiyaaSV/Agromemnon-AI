@@ -10,6 +10,7 @@ from tools.mandi_price import mandi_price
 from tools.rag_scheme_db import rag_scheme_db
 from tools.soil_type import soil_type
 from tools.weather import weather
+from tools.youtube_search import youtube_search
 
 ALL_TOOLS = [
     fertilizer_recommendation,
@@ -18,6 +19,7 @@ ALL_TOOLS = [
     rag_scheme_db,
     soil_type,
     weather,
+    youtube_search,
 ]
 
 TOOLS_BY_NAME = {tool.tool_name: tool for tool in ALL_TOOLS}

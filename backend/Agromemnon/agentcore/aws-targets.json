@@ -1,8 +1,8 @@
 [
   {
     "name": "default",
-    "description": "Default target (us-east-1)",
-    "account": "222758971755",
-    "region": "us-east-1"
+    "description": "Default target (ap-south-1)",
+    "account": "879835157388",
+    "region": "ap-south-1"
   }
 ]
