@@ -24,11 +24,20 @@
         {
           "name": "SOIL_NUTRIENTS_TABLE",
           "value": "Agromemnon-soil-nutrients"
+        },
+        {
+          "name": "SCHEME_KB_ID",
+          "value": "IY3TP8DVNA"
+        },
+        {
+          "name": "SCHEME_KB_REGION",
+          "value": "us-east-1"
         }
       ],
       "additionalPolicies": [
         "policies/dynamodb-mandi-prices.json",
-        "policies/dynamodb-soil-nutrients.json"
+        "policies/dynamodb-soil-nutrients.json",
+        "policies/bedrock-scheme-kb.json"
       ]
     }
   ],

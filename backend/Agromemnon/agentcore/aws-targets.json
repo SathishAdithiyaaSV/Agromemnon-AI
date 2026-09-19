@@ -1,7 +1,13 @@
 [
   {
-    "name": "default",
-    "description": "Default target (ap-south-1)",
+    "name": "main",
+    "description": "Consolidated target (us-east-1, has Bedrock + scheme KB)",
+    "account": "222758971755",
+    "region": "us-east-1"
+  },
+  {
+    "name": "personal",
+    "description": "Personal account target (ap-south-1)",
     "account": "879835157388",
     "region": "ap-south-1"
   }
