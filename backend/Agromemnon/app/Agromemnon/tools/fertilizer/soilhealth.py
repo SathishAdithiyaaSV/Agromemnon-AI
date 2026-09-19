@@ -201,6 +201,50 @@ def fetch_recommendations(session: requests.Session, state_id: str, district_id:
     return _query(session, RECOMMENDATIONS_QUERY, variables, "getRecommendations")
 
 
+def pair_recommendations(variants: list[dict], recommendations: list) -> list[tuple]:
+    """Pair each requested variant with its own recommendation.
+
+    The API does not echo back the crop id, and it does not return recommendations in the
+    order the ids were sent: ids sent as (season, irrigation) come back ordered by
+    (irrigation, season). Zipping the two lists positionally therefore attaches one
+    variant's dose to another variant's season and irrigation.
+
+    The only link is the API's own localised label, which ends in
+    "(<variety> / <irrigation> / <season>)". Matching on that is exact where it parses, and
+    falls back to position for anything left over, so an unparsed label still gets a dose.
+    """
+    by_label = {}
+    for recommendation in recommendations:
+        if not isinstance(recommendation, dict):
+            continue
+        label = recommendation.get("crop") or ""
+        inside = label[label.rfind("(") + 1:label.rfind(")")] if "(" in label and ")" in label else ""
+        parts = [normalize(part) for part in inside.split("/")]
+        if len(parts) == 3:
+            by_label.setdefault(tuple(parts), []).append(recommendation)
+
+    paired, leftovers = [], [r for r in recommendations if isinstance(r, dict)]
+    for variant in variants:
+        key = (normalize(variant["variety"]), normalize(variant["irrigation_type"]),
+               normalize(variant["season"]))
+        candidates = by_label.get(key)
+        if candidates:
+            match = candidates.pop(0)
+            if match in leftovers:
+                leftovers.remove(match)
+            paired.append((variant, match))
+        else:
+            paired.append((variant, None))
+
+    # Hand any unmatched labels to the variants that found nothing, in order.
+    unmatched = [index for index, (_, rec) in enumerate(paired) if rec is None]
+    for index, recommendation in zip(unmatched, leftovers):
+        logger.info("soilhealth: pairing recommendation by position, label did not parse")
+        paired[index] = (paired[index][0], recommendation)
+
+    return [(variant, rec) for variant, rec in paired if rec is not None]
+
+
 def recommend(crop: str, state: str, soil: dict, district: str = "", season: str = "",
               irrigation: str = "") -> dict:
     """Resolve names to ids and return the raw recommendations plus what was matched.

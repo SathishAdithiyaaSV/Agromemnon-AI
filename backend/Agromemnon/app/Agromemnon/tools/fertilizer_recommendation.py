@@ -2,11 +2,12 @@ import logging
 
 from strands import tool
 
-from tools.fertilizer import soilhealth
+from tools.fertilizer import nutrients, soil_store, soilhealth
 
 logger = logging.getLogger(__name__)
 
 SOURCE = "Soil Health Card, Department of Agriculture & Farmers Welfare (soilhealth.dac.gov.in)"
+SURVEY_SOURCE = "Soil Health Card nutrient survey, aggregated by area"
 
 # Soil test values outside these ranges are a unit mix-up or a typo rather than a real
 # reading. The API happily returns a dose for nonsense input, and an absurd dose looks
@@ -18,12 +19,12 @@ VALID_RANGES = {
     "organic_carbon": (0.01, 10.0, "%"),
 }
 
-# Standard Soil Health Card rating bands: (low_below, high_above).
-RATING_BANDS = {
-    "nitrogen": (280.0, 560.0),
-    "phosphorus": (10.0, 25.0),
-    "potassium": (108.0, 280.0),
-    "organic_carbon": (0.5, 0.75),
+SOIL_FIELDS = ("nitrogen", "phosphorus", "potassium", "organic_carbon")
+
+GRANULARITY_LABEL = {
+    "village": "the farmer's village",
+    "block": "the farmer's block/taluk",
+    "district": "the whole district",
 }
 
 
@@ -32,13 +33,6 @@ def _round(value):
     if not isinstance(value, (int, float)):
         return None
     return int(value) if float(value).is_integer() else round(float(value), 1)
-
-
-def _rate(field: str, value: float) -> str:
-    low, high = RATING_BANDS[field]
-    if value < low:
-        return "low"
-    return "medium" if value <= high else "high"
 
 
 def _products(entries) -> list[dict]:
@@ -84,35 +78,8 @@ def _variant_label(variant: dict) -> dict:
     }
 
 
-@tool
-def fertilizer_recommendation(crop: str, state: str, nitrogen: float, phosphorus: float,
-                              potassium: float, organic_carbon: float, district: str = "",
-                              season: str = "", irrigation: str = "") -> dict:
-    """Get the government fertilizer dose recommended for a crop, given a soil test result.
-
-    Converts soil test values into crop-specific fertilizer quantities using the official
-    Soil Health Card recommendations. Returns two interchangeable fertilizer combinations
-    plus organic manure options, all per hectare.
-
-    Args:
-        crop: Crop name in English, e.g. "banana", "paddy", "arecanut".
-        state: The farmer's state, e.g. "Karnataka". Required — recommendations are published per state.
-        nitrogen: Available nitrogen (N) from the soil test, in kg/ha.
-        phosphorus: Available phosphorus (P) from the soil test, in kg/ha.
-        potassium: Available potassium (K) from the soil test, in kg/ha.
-        organic_carbon: Organic carbon (OC) from the soil test, as a percentage.
-        district: Optional district, which refines the recommendation.
-        season: Optional season to pick a crop variant — "Kharif" or "Rabi".
-        irrigation: Optional irrigation type to pick a crop variant — "Irrigated" or "Rainfed".
-    """
-    if not crop.strip():
-        return {"error": "Specify which crop to fertilize, e.g. crop='banana', state='Karnataka'."}
-    if not state.strip():
-        return {"error": "Specify the farmer's state — recommendations are published per state."}
-
-    soil_values = {"nitrogen": nitrogen, "phosphorus": phosphorus,
-                   "potassium": potassium, "organic_carbon": organic_carbon}
-
+def _validate(soil_values: dict) -> dict | None:
+    """Reject soil values that cannot be a real reading. Returns an error dict or None."""
     for field, value in soil_values.items():
         low, high, unit = VALID_RANGES[field]
         if not isinstance(value, (int, float)) or isinstance(value, bool):
@@ -121,14 +88,143 @@ def fertilizer_recommendation(crop: str, state: str, nitrogen: float, phosphorus
             return {
                 "error": (f"{field} of {value} is outside the plausible range "
                           f"{low}–{high} {unit}; check the units on the soil test."),
-                "expected_units": {f: f"{r[2]}" for f, r in VALID_RANGES.items()},
+                "expected_units": {f: r[2] for f, r in VALID_RANGES.items()},
             }
+    return None
+
+
+def _from_survey(state: str, district: str, block: str, village: str):
+    """Look up area-typical soil values from the survey table.
+
+    Returns (soil_values, provenance) or None when the area was never surveyed.
+    """
+    row = soil_store.find(state, district=district, block=block, village=village)
+    if not row:
+        return None
+
+    macros = row.get("macronutrients") or {}
+    if any(field not in macros for field in SOIL_FIELDS):
+        return None
+
+    soil_values = {field: macros[field]["value"] for field in SOIL_FIELDS}
+
+    place = row.get("village") or row.get("block") or row.get("district")
+    provenance = {
+        "basis": "area_survey",
+        "area": place,
+        "area_level": row.get("granularity"),
+        "survey_year": row.get("survey_year"),
+        "fields_sampled": row.get("samples"),
+        "nutrient_levels": {field: macros[field]["level"] for field in SOIL_FIELDS},
+        "level_distribution_percent": {
+            field: macros[field].get("distribution_percent") or {} for field in SOIL_FIELDS
+        },
+        "source": SURVEY_SOURCE,
+        "caveat": (
+            f"These values are the survey average for {GRANULARITY_LABEL.get(row.get('granularity'), 'the area')} "
+            f"({place}), not a test of this farmer's field. Soil varies field to field, so "
+            "present the dose as a starting point and recommend a Soil Health Card test to confirm it."
+        ),
+    }
+
+    # Context the fertilizer API does not accept but that changes what the farmer should do.
+    if row.get("soil_ph"):
+        provenance["soil_ph"] = row["soil_ph"].get("level")
+    if row.get("salinity"):
+        provenance["salinity"] = row["salinity"].get("level")
+    deficient = row.get("micronutrient_deficient_percent") or {}
+    # Below roughly half the sampled fields, a deficiency is not the area's defining problem
+    # and listing it alongside the severe ones would flatten the difference.
+    short = {name: pct for name, pct in deficient.items() if isinstance(pct, (int, float)) and pct >= 50}
+    if short:
+        provenance["micronutrients_widely_deficient_percent"] = dict(
+            sorted(short.items(), key=lambda kv: kv[1], reverse=True))
+
+    return soil_values, provenance
+
+
+@tool
+def fertilizer_recommendation(crop: str, state: str, district: str = "", block: str = "",
+                              village: str = "", nitrogen: float | None = None,
+                              phosphorus: float | None = None, potassium: float | None = None,
+                              organic_carbon: float | None = None, season: str = "",
+                              irrigation: str = "") -> dict:
+    """Get the government fertilizer dose recommended for a crop in a particular place.
+
+    Soil test values are optional. When they are omitted the tool infers the area's typical
+    soil condition from the government soil-nutrient survey, so a farmer who has never had
+    their soil tested still gets a recommendation. Give the narrowest location known — a
+    village is far more representative than a whole district.
+
+    Pass the soil test values only if the farmer actually has a Soil Health Card in hand;
+    they override the survey and make the dose specific to their field. Never invent them.
+
+    Returns fertilizer combinations and organic manure options, all per hectare, along with
+    which soil values were used and where they came from.
+
+    Args:
+        crop: Crop name in English, e.g. "banana", "paddy", "arecanut".
+        state: The farmer's state, e.g. "Karnataka". Required — recommendations are published per state.
+        district: The farmer's district. Strongly recommended; needed to use the soil survey.
+        block: The farmer's block or taluk, which narrows the soil survey lookup.
+        village: The farmer's village, the most representative soil survey lookup.
+        nitrogen: Optional measured available nitrogen (N) in kg/ha, from a soil test.
+        phosphorus: Optional measured available phosphorus (P) in kg/ha, from a soil test.
+        potassium: Optional measured available potassium (K) in kg/ha, from a soil test.
+        organic_carbon: Optional measured organic carbon (OC) as a percentage, from a soil test.
+        season: Optional season to pick a crop variant — "Kharif" or "Rabi".
+        irrigation: Optional irrigation type to pick a crop variant — "Irrigated" or "Rainfed".
+    """
+    if not crop.strip():
+        return {"error": "Specify which crop to fertilize, e.g. crop='banana', state='Karnataka'."}
+    if not state.strip():
+        return {"error": "Specify the farmer's state — recommendations are published per state."}
+
+    measured = {"nitrogen": nitrogen, "phosphorus": phosphorus,
+                "potassium": potassium, "organic_carbon": organic_carbon}
+    supplied = {field: value for field, value in measured.items() if value is not None}
+
+    # A half-filled soil test is more likely a transcription slip than a real reading, and
+    # silently topping it up from the survey would hide which numbers came from where.
+    if supplied and len(supplied) != len(SOIL_FIELDS):
+        return {
+            "error": ("Give all four soil test values or none: "
+                      f"missing {sorted(set(SOIL_FIELDS) - set(supplied))}. "
+                      "Omit them all to use the area's soil survey instead."),
+        }
+
+    if supplied:
+        invalid = _validate(supplied)
+        if invalid:
+            return invalid
+        soil_values = supplied
+        provenance = {
+            "basis": "farmer_soil_test",
+            "source": "Soil test values supplied by the farmer.",
+        }
+    else:
+        found_soil = _from_survey(state, district, block, village)
+        if found_soil is None:
+            return {
+                "error": (f"No soil survey data for the area given in {state.title()}, and no soil "
+                          "test values were supplied."),
+                "next_step": ("Ask the farmer for their district (and village or taluk if they know it), "
+                              "or for the N, P, K and organic carbon figures on their Soil Health Card."),
+            }
+        soil_values, provenance = found_soil
+        invalid = _validate(soil_values)
+        if invalid:
+            logger.warning("survey-derived soil values rejected for %s/%s: %s",
+                           state, district, invalid["error"])
+            return {"error": "The soil survey data for this area looks implausible; "
+                             "ask the farmer for their Soil Health Card values instead."}
 
     try:
         found = soilhealth.recommend(
             crop=crop,
             state=state,
-            soil={"n": str(nitrogen), "p": str(phosphorus), "k": str(potassium), "OC": str(organic_carbon)},
+            soil={"n": str(soil_values["nitrogen"]), "p": str(soil_values["phosphorus"]),
+                  "k": str(soil_values["potassium"]), "OC": str(soil_values["organic_carbon"])},
             district=district,
             season=season,
             irrigation=irrigation,
@@ -149,13 +245,15 @@ def fertilizer_recommendation(crop: str, state: str, nitrogen: float, phosphorus
     result = {
         "crop": crop.lower(),
         "state": found["state"].title(),
-        "soil_test": {
-            "nitrogen_kg_per_ha": nitrogen,
-            "phosphorus_kg_per_ha": phosphorus,
-            "potassium_kg_per_ha": potassium,
-            "organic_carbon_percent": organic_carbon,
+        "soil_values_used": {
+            "nitrogen_kg_per_ha": soil_values["nitrogen"],
+            "phosphorus_kg_per_ha": soil_values["phosphorus"],
+            "potassium_kg_per_ha": soil_values["potassium"],
+            "organic_carbon_percent": soil_values["organic_carbon"],
         },
-        "soil_ratings": {field: _rate(field, float(value)) for field, value in soil_values.items()},
+        "soil_ratings": {field: nutrients.rate(field, float(value))
+                         for field, value in soil_values.items()},
+        "soil_data_provenance": provenance,
         "recommendations": [],
         "dose_basis": "Quantities are per hectare for the whole crop season.",
         "source": SOURCE,
@@ -163,10 +261,9 @@ def fertilizer_recommendation(crop: str, state: str, nitrogen: float, phosphorus
     if found["district"]:
         result["district"] = found["district"].title()
 
-    # The API returns recommendations in the order the crop ids were sent.
-    for variant, recommendation in zip(found["variants"], found["recommendations"]):
-        if not isinstance(recommendation, dict):
-            continue
+    # Paired on the API's own label, not by position: see soilhealth.pair_recommendations.
+    for variant, recommendation in soilhealth.pair_recommendations(
+            found["variants"], found["recommendations"]):
         options = [
             products for products in (_products(recommendation.get("fertilizersdata")),
                                       _products(recommendation.get("fertilizersdatacombTwo")))
