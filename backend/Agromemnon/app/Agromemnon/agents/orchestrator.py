@@ -1,12 +1,28 @@
-from strands import Agent
-from strands.agent.conversation_manager.null_conversation_manager import NullConversationManager
+import logging
+from pathlib import Path
 
+from strands import Agent, AgentSkills
+from strands.agent.conversation_manager.summarizing_conversation_manager import (
+    SummarizingConversationManager,
+)
+
+import memory
 from agents import crop_agent, guardrails, irrigation_agent, scheme_adviser, video_tutor
 from model.load import load_model
+
+logger = logging.getLogger(__name__)
 
 # Add a new specialist by writing agents/<name>.py with a build(model) function and
 # listing its module here — the orchestrator exposes each one as a tool.
 SUB_AGENTS = (scheme_adviser, crop_agent, irrigation_agent, video_tutor)
+
+# Skills are field procedure: the steps for diagnosing a sick crop, reading a soil
+# health card, scheduling irrigation, seeing a scheme application through. That
+# knowledge is too long to sit in the system prompt of every turn and too
+# situational to hard-code in a tool, which is what the AgentSkills plugin is for:
+# only each skill's name and description load upfront, and the full procedure is
+# fetched on demand when a farmer's question actually calls for it.
+SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
 
 ROLE = """\
 You are Agromemnon, an agricultural advisory assistant for Indian farmers. You are the only
@@ -32,7 +48,9 @@ specialist: your own recollection of crops, prices and doses is not a source.
 
 Pass on every detail the farmer gave — state, district, taluk, village, crop, season,
 irrigation, land size, any soil test figures — because a specialist that is not told the
-location cannot look anything up. Never invent a location or a crop the farmer did not name.
+location cannot look anything up. Details you know from the farmer's account or remember
+from an earlier conversation count as given: pass those on too, rather than asking again.
+Never invent a location or a crop the farmer did not name.
 
 When you call several specialists, merge their answers into one reply, in the order the
 farmer asked. Say each thing once. If they disagree, give the more specific and cautious
@@ -55,16 +73,68 @@ if video_tutor returned a link, close with the link on its own line under a
 may use. If video_tutor returned NO_VIDEO, end the answer without mentioning that a video was
 looked for — a farmer told "I found no video" learns nothing."""
 
-SYSTEM_PROMPT = guardrails.compose(ROLE, DUTIES)
+
+def _skill_paths() -> list[str]:
+    """Every skill directory under skills/, as explicit paths.
+
+    The paths are listed rather than handing AgentSkills the parent directory,
+    because skills/ also holds fetcher.py and collects a __pycache__ at runtime, and
+    a parent scan would try to load those as skills and warn on each one.
+    """
+    if not SKILLS_DIR.is_dir():
+        return []
+    return [str(path) for path in sorted(SKILLS_DIR.iterdir()) if (path / "SKILL.md").is_file()]
 
 
-def build() -> Agent:
+def build(context) -> Agent:
+    """Build the farmer-facing agent for one conversation.
+
+    `context` carries the farmer (actor) and the conversation (session), which is
+    what makes the agent's memory theirs: history is restored for this session and
+    long-term records are read from this farmer's namespaces.
+
+    Every AWS-backed capability here degrades instead of failing. A missing memory
+    resource costs recall and durable history, not the answer.
+    """
     model = load_model()
+
+    session_manager = memory.build_session_manager(context)
+    memory_manager = memory.build_memory_manager(context)
+
+    # The recall guardrail is only stated when recall actually exists. Describing a
+    # <memory> block and a recall tool to an agent that has neither invites it to
+    # claim it remembered something.
+    extra_prompts = [context.profile.describe()]
+    if memory_manager is not None:
+        extra_prompts.append(guardrails.RECALLED_MEMORY)
+
+    plugins = []
+    skill_paths = _skill_paths()
+    if skill_paths:
+        plugins.append(AgentSkills(skills=skill_paths))
+
     return Agent(
         name="orchestrator",
+        # Stable so a restored session reattaches to the same agent record rather
+        # than starting a second one alongside it.
+        agent_id="orchestrator",
         description="Routes farmer questions to the specialist agents and combines their answers.",
         model=model,
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=guardrails.compose(ROLE, DUTIES, *extra_prompts),
         tools=[module.build(model).as_tool() for module in SUB_AGENTS],
-        conversation_manager=NullConversationManager(),
+        plugins=plugins,
+        session_manager=session_manager,
+        memory_manager=memory_manager,
+        # Replaces NullConversationManager, which never trimmed: history grew until it
+        # overran the model's context window and the turn simply failed. That was
+        # survivable when history died with the process, but a session now restores
+        # months of conversation, so the window has to be managed. Summarizing rather
+        # than dropping, because the early turns are where the farmer described their
+        # land — the details a sliding window would throw away first. Proactive
+        # compression keeps that work off the turn that would otherwise overflow.
+        conversation_manager=SummarizingConversationManager(
+            summary_ratio=0.3,
+            preserve_recent_messages=10,
+            proactive_compression=True,
+        ),
     )

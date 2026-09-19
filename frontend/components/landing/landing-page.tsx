@@ -16,7 +16,10 @@ import { Reveal } from '@/components/reveal'
 import { Button } from '@/components/ui/button'
 import { useLanguage } from '@/contexts/language-context'
 import type { TranslationKey } from '@/lib/i18n'
+import { CropTicker } from './crop-ticker'
+import { FieldScene } from './field-scene'
 import { HeroPreview } from './hero-preview'
+import { Seedling } from './seedling'
 import { SiteHeader } from './site-header'
 
 const COUNCIL = [
@@ -106,7 +109,7 @@ export function LandingPage({
           aria-hidden
         />
 
-        <div className="relative mx-auto grid max-w-6xl items-center gap-12 px-4 pb-16 pt-14 sm:px-6 sm:pb-24 sm:pt-20 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16">
+        <div className="relative mx-auto grid max-w-6xl items-center gap-12 px-4 pb-10 pt-14 sm:px-6 sm:pb-14 sm:pt-20 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16">
           <div>
             <Reveal>
               <span className="inline-flex items-center gap-2 rounded-full border border-border bg-card/70 px-3.5 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur">
@@ -119,7 +122,10 @@ export function LandingPage({
               <h1 className="mt-6 font-display text-4xl leading-[1.05] tracking-tight text-balance sm:text-5xl lg:text-6xl">
                 {t('landing.hero.title')}
                 <br />
-                <span className="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+                <span
+                  className="bg-gradient-to-r from-primary via-accent to-primary bg-[length:220%_100%] bg-clip-text text-transparent"
+                  style={{ animation: 'sun-sweep 11s ease-in-out infinite' }}
+                >
                   {t('landing.hero.titleAccent')}
                 </span>
               </h1>
@@ -149,7 +155,12 @@ export function LandingPage({
             <HeroPreview />
           </div>
         </div>
+
+        {/* Closes the hero with the thing the product is actually about. */}
+        <FieldScene />
       </section>
+
+      <CropTicker />
 
       {/* ------------------------------------------------------------- council */}
       <section id="council" className="scroll-mt-20 border-t border-border bg-card/40">
@@ -171,7 +182,10 @@ export function LandingPage({
                     className={`pointer-events-none absolute -right-16 -top-16 size-40 rounded-full bg-gradient-to-br ${item.ring} to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100`}
                     aria-hidden
                   />
-                  <item.icon className={`size-7 ${item.tone}`} strokeWidth={1.6} />
+                  <item.icon
+                    className={`size-7 ${item.tone} transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:-translate-y-0.5 group-hover:scale-110 group-hover:-rotate-6`}
+                    strokeWidth={1.6}
+                  />
                   <h3 className="mt-5 font-display text-xl tracking-tight">{t(item.title)}</h3>
                   <p className="mt-3 text-[0.9375rem] leading-relaxed text-muted-foreground">
                     {t(item.desc)}
@@ -241,6 +255,7 @@ export function LandingPage({
         <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-24">
           <Reveal>
             <div className="furrows-diag relative overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-primary/12 via-card to-accent/12 px-6 py-14 text-center sm:px-14">
+              <Seedling className="mx-auto mb-6 h-16 w-auto" />
               <h2 className="mx-auto max-w-2xl font-display text-3xl tracking-tight text-balance sm:text-4xl">
                 {t('landing.cta.title')}
               </h2>

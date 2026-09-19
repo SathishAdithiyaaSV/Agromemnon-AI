@@ -121,7 +121,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
       try {
         const reply = await sendChat({
-          prompt: buildPrompt(userText, { language, profile, includeContext: true }),
+          prompt: buildPrompt(userText, { language }),
           sessionId: sessionIdFor(profile.sub, conversationId),
           image,
           signal: controller.signal,

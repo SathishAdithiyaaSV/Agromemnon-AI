@@ -120,6 +120,8 @@
   --animate-drift: drift 22s linear infinite;
   --animate-fade: fade 0.2s ease-out both;
   --animate-slide-left: slide-left 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-sway: sway 4.5s ease-in-out infinite;
+  --animate-marquee: marquee 38s linear infinite;
 }
 
 @keyframes rise {
@@ -177,6 +179,158 @@
   }
   to {
     transform: translate3d(-80px, 0, 0);
+  }
+}
+
+/*
+  ------------------------------------------------------------------ field motion
+  Keyframes for the animated farm scene that closes the hero. All but one animate
+  transform and opacity only, so the band stays on the compositor; `rows` moves a
+  background-position and is deliberately confined to a 4rem strip. Every one of
+  them is switched off by the `prefers-reduced-motion` rule at the end of the file.
+*/
+
+/* A stalk hinged at its base, leaning in the wind. */
+@keyframes sway {
+  0%,
+  100% {
+    transform: rotate(-2.2deg);
+  }
+  50% {
+    transform: rotate(2.2deg);
+  }
+}
+
+/* Clouds and birds crossing the sky. `--from`/`--to` let each copy set its own span. */
+@keyframes cross {
+  from {
+    transform: translate3d(var(--from, -20%), 0, 0);
+  }
+  to {
+    transform: translate3d(var(--to, 120%), 0, 0);
+  }
+}
+
+/* Wing beat: the bird is drawn wide, then squashed vertically. */
+@keyframes flap {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+  50% {
+    transform: scaleY(0.35);
+  }
+}
+
+@keyframes wheel {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Exhaust puff: rises, spreads, fades. */
+@keyframes puff {
+  from {
+    opacity: 0.45;
+    transform: translate3d(0, 0, 0) scale(0.6);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(-14px, -34px, 0) scale(2.2);
+  }
+}
+
+@keyframes sun-glow {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.08);
+  }
+}
+
+/* Seed / pollen motes lifting off the field. */
+@keyframes mote {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0);
+  }
+  12% {
+    opacity: 0.7;
+  }
+  85% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--mote-x, 40px), -220px, 0);
+  }
+}
+
+/* Plough furrows running toward the viewer, as if the camera were moving. */
+@keyframes rows {
+  to {
+    background-position: 0 28px;
+  }
+}
+
+/* A stroke that draws itself — used for the germinating seedling. */
+@keyframes draw {
+  from {
+    stroke-dashoffset: var(--len, 100);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes unfurl {
+  from {
+    opacity: 0;
+    transform: scale(0.2) rotate(-18deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+/* Rain falling onto the water card. */
+@keyframes rainfall {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -12px, 0);
+  }
+  20% {
+    opacity: 0.8;
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 34px, 0);
+  }
+}
+
+/* Half-width track scrolled by half its own length: a seamless loop. */
+@keyframes marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+/* Light travelling across the headline's accent, like sun moving over a field. */
+@keyframes sun-sweep {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
   }
 }
 
@@ -261,6 +415,31 @@
 
   .no-scrollbar {
     scrollbar-width: none;
+  }
+
+  /* ------------------------------------------------------------ field scene */
+
+  /* SVG parts rotate/scale about their own box, not the viewBox origin. */
+  .origin-self {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  .origin-base {
+    transform-box: fill-box;
+    transform-origin: bottom center;
+  }
+
+  /* The soil band under the hero: furrows crawling toward the viewer. */
+  .soil-rows {
+    background-image: repeating-linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--primary) 16%, transparent) 0px,
+      color-mix(in oklch, var(--primary) 16%, transparent) 2px,
+      transparent 2px,
+      transparent 28px
+    );
+    animation: rows 3.4s linear infinite;
   }
 }
 
@@ -411,4 +590,30 @@
 
 .md-body tbody tr:nth-child(even) td {
   background: color-mix(in oklch, var(--muted) 40%, transparent);
+}
+
+/*
+  One switch for every looping animation on the site — the field scene, the crop
+  ticker, the germinating seedling, the voice waveform.
+
+  `animation: none` rather than the usual `duration: 0.01ms` reset: several of
+  these keyframes end offscreen or at zero opacity (clouds crossing, seed motes
+  rising), so fast-forwarding them would make those elements vanish. Cancelling
+  instead leaves every element in its natural, laid-out, fully visible state —
+  the same page, standing still. Unlayered on purpose: an `!important` inside a
+  cascade layer loses to one outside every layer.
+
+  Framer Motion is not covered here; those components call `useReducedMotion()`.
+*/
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  html {
+    scroll-behavior: auto;
+  }
 }

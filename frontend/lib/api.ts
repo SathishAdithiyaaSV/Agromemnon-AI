@@ -6,7 +6,7 @@
  * or times out. Callers get a typed ChatError for each case so the UI can say
  * something specific instead of "something went wrong".
  */
-import { getIdToken, type FarmerProfile, type LanguageCode } from './cognito'
+import { getIdToken, type LanguageCode } from './cognito'
 
 const API_BASE = (process.env.NEXT_PUBLIC_AGENT_API_URL ?? '').replace(/\/+$/, '')
 
@@ -49,35 +49,29 @@ const LANGUAGE_NAMES: Record<LanguageCode, string> = {
 }
 
 /**
- * The agent answers in English unless told otherwise, and it needs a location for
- * its weather, soil and mandi-price tools. Both are prepended here rather than
- * asked of the farmer: the location goes in only on the first turn of a session,
- * because after that it is already in the agent's conversation history.
+ * The language directive is the only thing prepended to a farmer's message.
+ *
+ * Who the farmer is and where they farm used to be prepended here too, on the
+ * first turn of each session. That is now the backend's job: the chat Lambda reads
+ * those details from the Cognito ID token it has already verified and passes them
+ * to the agent, which puts them in its system prompt. Two reasons that is better.
+ * The claims cannot be edited by the browser, and a system prompt is present on
+ * every turn — the first-turn prepend survived only as long as the conversation
+ * history did, so a backend restart lost the farmer's district while the screen
+ * still showed the conversation that established it.
+ *
+ * Language stays here because it is a live UI choice. The farmer can flip the
+ * switcher mid-conversation, and that has to win over the language saved on their
+ * profile.
  */
-export function buildPrompt(
-  text: string,
-  options: { language: LanguageCode; profile?: FarmerProfile | null; includeContext?: boolean },
-): string {
-  const directives: string[] = []
+export function buildPrompt(text: string, options: { language: LanguageCode }): string {
+  if (options.language === 'en') return text
 
-  if (options.language !== 'en') {
-    directives.push(
-      `Reply entirely in ${LANGUAGE_NAMES[options.language]}, including any table headings. Keep crop, scheme and place names recognisable, adding the English name in brackets where it helps.`,
-    )
-  }
+  const directive =
+    `Reply entirely in ${LANGUAGE_NAMES[options.language]}, including any table headings. ` +
+    'Keep crop, scheme and place names recognisable, adding the English name in brackets where it helps.'
 
-  if (options.includeContext && options.profile) {
-    const { name, district, state } = options.profile
-    const where = [district, state].filter(Boolean).join(', ')
-    const who = [
-      name ? `The farmer's name is ${name}.` : null,
-      where ? `They farm in ${where}, India — use this location for weather, soil and mandi-price lookups unless they name another place.` : null,
-    ].filter(Boolean)
-    directives.push(...(who as string[]))
-  }
-
-  if (directives.length === 0) return text
-  return `[Context for you, not to be repeated back: ${directives.join(' ')}]\n\n${text}`
+  return `[Context for you, not to be repeated back: ${directive}]\n\n${text}`
 }
 
 export interface SendChatArgs {

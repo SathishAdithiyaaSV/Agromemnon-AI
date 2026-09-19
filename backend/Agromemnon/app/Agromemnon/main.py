@@ -1,29 +1,49 @@
+import asyncio
 from typing import Any
 from collections import OrderedDict
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from agents.orchestrator import build as build_orchestrator
+from memory.context import RequestContext
 
 app = BedrockAgentCoreApp()
 log = app.logger
 
+MAX_CACHED_AGENTS = 128
 
-# Reuses one orchestrator per session_id so each session keeps its own in-process
-# conversation history (best-effort; resets on cold start). The cache is bounded
-# to 128 sessions with LRU eviction (least-recently-used is dropped and its
-# history reset) so a single process serving many sessions cannot leak history
-# between them or grow without limit. For durable history, attach a session manager.
-def agent_factory():
-    cache = OrderedDict()
-    def get_or_create_agent(session_id):
-        if session_id in cache:
-            cache.move_to_end(session_id)
-            return cache[session_id]
-        if len(cache) >= 128:
-            cache.popitem(last=False)
-        cache[session_id] = build_orchestrator()
-        return cache[session_id]
-    return get_or_create_agent
-get_or_create_agent = agent_factory()
+# Reuses one orchestrator per (actor, session) so a returning turn skips both the
+# build and the history restore. The cache is bounded to 128 with LRU eviction so a
+# single process serving many farmers cannot grow without limit.
+#
+# The key includes the actor, not just the session: the session id arrives from the
+# client while the actor is derived from a verified token, so keying on the session
+# alone would let a crafted session id collide onto another farmer's cached agent —
+# and that agent holds their conversation.
+#
+# Eviction is now cheap. Conversation state lives in AgentCore Memory, so dropping a
+# cached agent costs a rebuild and a restore, not the conversation. Before the
+# session manager, eviction silently erased it.
+_cache: "OrderedDict[tuple[str, str], Any]" = OrderedDict()
+# One build at a time. Two turns arriving together for a cold session would
+# otherwise both build an agent, both restore the same history, and one would be
+# thrown away after having already written to memory.
+_build_lock = asyncio.Lock()
+
+
+async def get_or_create_agent(context: RequestContext):
+    key = (context.actor_id, context.session_id)
+    async with _build_lock:
+        if key in _cache:
+            _cache.move_to_end(key)
+            return _cache[key]
+        if len(_cache) >= MAX_CACHED_AGENTS:
+            _cache.popitem(last=False)
+        # Constructing the agent reads the session back from AgentCore Memory over
+        # blocking boto3 calls, and Strands forbids an async initialization hook, so
+        # the build goes to a worker thread rather than stalling the event loop that
+        # is streaming to the farmer.
+        agent = await asyncio.to_thread(build_orchestrator, context)
+        _cache[key] = agent
+        return agent
 
 
 def strip_trailing_tool_use(messages: Any) -> list[dict]:
@@ -80,7 +100,11 @@ async def invoke(payload, context):
     log.info("Invoking Agent.....")
 
     session_id = getattr(context, 'session_id', 'default-session')
-    agent = get_or_create_agent(session_id)
+    # Identity and profile come from the payload the chat Lambda built out of the
+    # verified Cognito claims, never from anything the browser chose. See
+    # memory/context.py for why that distinction is load-bearing.
+    request = RequestContext.from_payload(payload, session_id)
+    agent = await get_or_create_agent(request)
 
     prompt = _extract_prompt(payload)
 

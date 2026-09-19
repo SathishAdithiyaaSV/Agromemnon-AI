@@ -101,6 +101,12 @@ Resources:
       #
       #   * _reply sets no CORS headers on purpose. The HTTP API below owns CORS;
       #     a second Access-Control-Allow-Origin makes browsers reject the response.
+      #   * actorId and profile are read from the JWT claims that the authorizer has
+      #     already verified, never from the request body. They key the farmer's
+      #     AgentCore Memory, so a body-supplied actorId would let any caller read
+      #     another farmer's remembered soil readings and scheme history by guessing
+      #     their sub. When the route runs unauthenticated there are no claims and
+      #     the runtime falls back to a session-scoped anonymous actor.
       #   * The runtime requires a session id of at least 33 characters. A shorter
       #     client id is padded with a hash of itself rather than a random value, so
       #     the same browser keeps reaching the same agent session (and its history).
@@ -110,6 +116,8 @@ Resources:
       #     returns whatever text arrived, flagged as truncated. A per-read timeout is
       #     not enough on its own: SSE events keep trickling in, so no single read ever
       #     stalls while the turn as a whole runs past the 30s gateway limit.
+      #   * The exception detail is logged, not returned: it reached the browser before
+      #     and carried internals with it.
       Code:
         ZipFile: |
           import hashlib
@@ -117,7 +125,6 @@ Resources:
           import os
           import re
           import time
-          import uuid
 
           import boto3
           from botocore.config import Config
@@ -126,32 +133,24 @@ Resources:
           client = boto3.client("bedrock-agentcore",
                                 config=Config(read_timeout=26, connect_timeout=5, retries={"max_attempts": 0}))
 
-          MIN_SESSION_LEN = 33
-          MAX_SESSION_LEN = 128
-
-
           def _reply(status, body):
               return {"statusCode": status,
                       "headers": {"Content-Type": "application/json"},
                       "body": json.dumps(body)}
 
-
           def _session_id(raw):
               cleaned = re.sub(r"[^A-Za-z0-9_-]", "-", (raw or "").strip())
               if not cleaned:
-                  return (uuid.uuid4().hex + uuid.uuid4().hex)[:40]
-              if len(cleaned) < MIN_SESSION_LEN:
+                  return os.urandom(20).hex()
+              if len(cleaned) < 33:
                   cleaned += "-" + hashlib.sha256(cleaned.encode()).hexdigest()
-              return cleaned[:MAX_SESSION_LEN]
-
+              return cleaned[:128]
 
           def _collect(stream, deadline):
-              chunks, stop_reason, usage, error = [], None, None, None
-              truncated = False
-
+              chunks, stop, usage, error, cut = [], None, None, None, False
               for line in stream.iter_lines():
                   if time.monotonic() > deadline:
-                      truncated = True
+                      cut = True
                       break
                   if not line or not line.startswith(b"data:"):
                       continue
@@ -161,70 +160,69 @@ Resources:
                       continue
                   if not isinstance(event, dict):
                       continue
-
                   if event.get("error"):
                       error = str(event["error"])
                       continue
-
                   inner = event.get("event")
                   if not isinstance(inner, dict):
                       continue
                   text = (inner.get("contentBlockDelta") or {}).get("delta", {}).get("text")
                   if isinstance(text, str):
                       chunks.append(text)
-                  stop_reason = (inner.get("messageStop") or {}).get("stopReason") or stop_reason
+                  stop = (inner.get("messageStop") or {}).get("stopReason") or stop
                   usage = (inner.get("metadata") or {}).get("usage") or usage
-
-              return "".join(chunks), stop_reason, usage, error, truncated
-
+              return "".join(chunks), stop, usage, error, cut
 
           def handler(event, context):
               try:
                   body = json.loads(event.get("body") or "{}")
               except json.JSONDecodeError:
-                  return _reply(400, {"error": "Request body must be JSON."})
+                  body = None
               if not isinstance(body, dict):
-                  return _reply(400, {"error": "Request body must be a JSON object."})
-
+                  return _reply(400, {"error": "Body must be a JSON object."})
               prompt = body.get("prompt")
               if not isinstance(prompt, str) or not prompt.strip():
-                  return _reply(400, {"error": "Provide a non-empty 'prompt' string."})
+                  return _reply(400, {"error": "Provide a non-empty 'prompt'."})
 
               session_id = _session_id(body.get("sessionId"))
+              payload = {"prompt": prompt}
+              auth = (event.get("requestContext") or {}).get("authorizer") or {}
+              claims = (auth.get("jwt") or {}).get("claims") or {}
+              if claims.get("sub"):
+                  payload["actorId"] = claims["sub"]
+              profile = {f: claims.get(f) or claims.get("custom:" + f)
+                         for f in ("name", "state", "district", "language", "age")}
+              profile = {k: v for k, v in profile.items() if v}
+              if profile:
+                  payload["profile"] = profile
+
               left = context.get_remaining_time_in_millis() / 1000 if context else 29
               deadline = time.monotonic() + max(left - 3, 5)
-
               try:
                   response = client.invoke_agent_runtime(
                       agentRuntimeArn=RUNTIME_ARN,
                       runtimeSessionId=session_id,
-                      payload=json.dumps({"prompt": prompt}).encode("utf-8"),
+                      payload=json.dumps(payload).encode("utf-8"),
                   )
-                  answer, stop_reason, usage, error, truncated = _collect(response["response"], deadline)
+                  answer, stop, usage, error, cut = _collect(response["response"], deadline)
               except client.exceptions.ThrottlingException:
                   return _reply(429, {"error": "The agent is busy. Retry shortly.", "sessionId": session_id})
               except Exception as exc:
                   print(f"invoke failed: {exc!r}")
-                  return _reply(502, {"error": "The agent could not be reached.",
-                                      "detail": repr(exc), "sessionId": session_id})
+                  return _reply(502, {"error": "The agent could not be reached.", "sessionId": session_id})
 
               if not answer:
-                  if truncated:
-                      return _reply(504, {"error": "Timed out before the agent answered; "
-                                                   "try a narrower question.",
+                  if cut:
+                      return _reply(504, {"error": "Timed out; ask something narrower.",
                                           "sessionId": session_id})
                   return _reply(502, {"error": error or "The agent returned no text.",
                                       "sessionId": session_id})
 
               result = {"response": answer, "sessionId": session_id}
-              if stop_reason:
-                  result["stopReason"] = stop_reason
-              if usage:
-                  result["usage"] = usage
-              if error:
-                  result["warning"] = error
-              if truncated:
-                  result["truncated"] = True
+              for key, value in (("stopReason", stop), ("usage", usage),
+                                 ("warning", error), ("truncated", cut or None)):
+                  if value:
+                      result[key] = value
               return _reply(200, result)
 
   # --------------------------------------------------------------- HTTP API

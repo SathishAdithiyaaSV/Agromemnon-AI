@@ -32,16 +32,57 @@
         {
           "name": "SCHEME_KB_REGION",
           "value": "us-east-1"
+        },
+        {
+          "name": "AGENTCORE_MEMORY_NAME",
+          "value": "AgromemnonFarmerMemory"
+        },
+        {
+          "name": "GEMINI_API_KEY_SECRET",
+          "value": "Agromemnon/gemini-api-key"
         }
       ],
       "additionalPolicies": [
         "policies/dynamodb-mandi-prices.json",
         "policies/dynamodb-soil-nutrients.json",
-        "policies/bedrock-scheme-kb.json"
+        "policies/bedrock-scheme-kb.json",
+        "policies/agentcore-memory.json",
+        "policies/gemini-api-key.json"
       ]
     }
   ],
-  "memories": [],
+  "memories": [
+    {
+      "name": "AgromemnonFarmerMemory",
+      "eventExpiryDuration": 365,
+      "strategies": [
+        {
+          "type": "USER_PREFERENCE",
+          "name": "FarmerPreferences",
+          "description": "How this farmer farms and prefers to be advised: crops grown, irrigation available, land size, language.",
+          "namespaceTemplates": [
+            "farmer/{actorId}/profile"
+          ]
+        },
+        {
+          "type": "SEMANTIC",
+          "name": "FarmFacts",
+          "description": "Durable facts the farmer has stated: soil health card readings, plot sizes, sowing dates, schemes applied for, past crop problems.",
+          "namespaceTemplates": [
+            "farmer/{actorId}/facts"
+          ]
+        },
+        {
+          "type": "SUMMARIZATION",
+          "name": "ConversationSummaries",
+          "description": "One running summary per conversation, so advice given weeks ago can be followed up.",
+          "namespaceTemplates": [
+            "farmer/{actorId}/chats/{sessionId}"
+          ]
+        }
+      ]
+    }
+  ],
   "knowledgeBases": [],
   "credentials": [],
   "evaluators": [],
