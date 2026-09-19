@@ -1,10 +1,11 @@
 import json
-import os
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from strands import tool
+
+import secret_store
 
 
 DATA_GOV_RESOURCE_ID = "35be999b-0208-4354-b557-f6ca9a5355de"
@@ -14,11 +15,12 @@ PAGE_SIZE = 1000
 MAX_PAGES = 10
 
 def _request_records(location: str, season: str, offset: int = 0) -> dict:
-    api_key = os.getenv("DATA_GOV_API_KEY")
+    api_key = secret_store.resolve("DATA_GOV_API_KEY")
     if not api_key:
         raise RuntimeError(
-            "DATA_GOV_API_KEY is not configured. Create an API key at data.gov.in "
-            "and add it to the runtime environment."
+            "DATA_GOV_API_KEY is not configured. Create an API key at data.gov.in, then "
+            "set DATA_GOV_API_KEY locally or point DATA_GOV_API_KEY_SECRET at a Secrets "
+            "Manager secret for a deployed runtime."
         )
 
     params = {
@@ -26,10 +28,16 @@ def _request_records(location: str, season: str, offset: int = 0) -> dict:
         "format": "json",
         "limit": PAGE_SIZE,
         "offset": offset,
-        "filters[District_Name]": location,
+        # The resource's own field names are lower_snake_case, and data.gov.in silently
+        # returns an empty page for a filter naming a field that does not exist. Sending
+        # "District_Name" therefore did not narrow the query — it matched nothing, for
+        # every district, every time. The values are stored upper-case ("BAGALKOT") and
+        # the filter compares exactly, so the district has to be folded up to match while
+        # the season is stored title-case and must not be.
+        "filters[district_name]": location.upper(),
     }
     if season:
-        params["filters[Season]"] = season
+        params["filters[season]"] = season.strip().title()
 
     request = Request(
         f"{DATA_GOV_API_URL}?{urlencode(params)}",
@@ -70,8 +78,12 @@ def _number(value):
 
 
 def _normalize_record(record: dict) -> dict:
-    area = _number(_field(record, "Area", "Area (Hectares)"))
-    production = _number(_field(record, "Production", "Production (Tonnes)"))
+    # "area_" and "production_" are what this resource actually calls them, trailing
+    # underscore and all. Without them every row parsed to a null area and production,
+    # so the tool returned crop names with no figures attached — and NO_INVENTION
+    # correctly stops the agent inventing the numbers to fill the gap.
+    area = _number(_field(record, "area_", "Area", "Area (Hectares)"))
+    production = _number(_field(record, "production_", "Production", "Production (Tonnes)"))
     calculated_yield = production * 1000 / area if area and production is not None else None
     return {
         "state": _field(record, "State_Name", "State", "State Name"),

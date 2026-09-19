@@ -1,10 +1,11 @@
 import json
-import os
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from strands import tool
+
+import secret_store
 
 
 WEATHER_API_URL = "https://api.weatherapi.com/v1/forecast.json"
@@ -84,11 +85,12 @@ def weather(location: str, days: int = 7) -> str:
         location: Place name or "latitude,longitude".
         days: Number of days to forecast.
     """
-    api_key = os.getenv("WEATHERAPI_KEY")
+    api_key = secret_store.resolve("WEATHERAPI_KEY")
     if not api_key:
         raise RuntimeError(
-            "WEATHERAPI_KEY is not configured. Create a WeatherAPI.com account "
-            "and set WEATHERAPI_KEY in the runtime environment."
+            "WEATHERAPI_KEY is not configured. Create a WeatherAPI.com account, then "
+            "set WEATHERAPI_KEY locally or point WEATHERAPI_KEY_SECRET at a Secrets "
+            "Manager secret for a deployed runtime."
         )
     if not isinstance(location, str) or not location.strip():
         raise ValueError("location must be a non-empty place name or latitude,longitude")

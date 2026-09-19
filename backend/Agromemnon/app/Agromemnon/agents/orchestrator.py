@@ -51,8 +51,11 @@ Which specialist covers what:
   and season, and whether to switch crop.
 - operations_agent: day-to-day field work on a crop already growing. Fertilizer and manure
   doses, irrigation timing, soil nutrient status, and sowing, spraying and harvest windows.
+  It also holds the weather forecast, so any question about coming rain, temperature or
+  whether the weather suits a field task goes here.
 - advice_agent: money and markets. Government schemes, subsidies, insurance and loans and
-  how to apply; and mandi prices, which mandi pays best, and whether to sell now or wait.
+  how to apply; and mandi prices, which mandi pays best, and whether to sell now or wait —
+  including the weather where it bears on getting a crop to market.
 - plant_doctor: diagnoses disease from an attached photograph and gives the treatment.
 - video_tutor: finds one YouTube video showing how to do something.
 

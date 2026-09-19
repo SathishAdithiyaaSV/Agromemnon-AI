@@ -42,14 +42,6 @@
           "value": "Agromemnon/gemini-api-key"
         },
         {
-          "name": "LEAF_DISEASE_ENDPOINT",
-          "value": "agromemnon-leaf-disease"
-        },
-        {
-          "name": "LEAF_DISEASE_REGION",
-          "value": "us-east-1"
-        },
-        {
           "name": "VISION_MODEL_ID",
           "value": "us.amazon.nova-pro-v1:0"
         },
@@ -64,6 +56,14 @@
         {
           "name": "TEXT_MODEL_REGION",
           "value": "us-east-1"
+        },
+        {
+          "name": "WEATHERAPI_KEY_SECRET",
+          "value": "Agromemnon/weatherapi-key"
+        },
+        {
+          "name": "DATA_GOV_API_KEY_SECRET",
+          "value": "Agromemnon/data-gov-api-key"
         }
       ],
       "additionalPolicies": [
@@ -72,7 +72,7 @@
         "policies/bedrock-scheme-kb.json",
         "policies/agentcore-memory.json",
         "policies/gemini-api-key.json",
-        "policies/sagemaker-leaf-disease.json",
+        "policies/external-api-keys.json",
         "policies/bedrock-text-model.json",
         "policies/bedrock-vision-model.json"
       ]

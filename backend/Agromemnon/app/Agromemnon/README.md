@@ -24,10 +24,23 @@ invoking the agent.
 | Variable | Required | Description |
 | --- | --- | --- |
 | `LOCAL_DEV` | No | Set to `1` to use `.env.local` instead of AgentCore Identity |
-| `LEAF_DISEASE_ENDPOINT` | No | SageMaker endpoint for the leaf disease classifier (default `agromemnon-leaf-disease`) |
-| `LEAF_DISEASE_REGION` | No | Region that endpoint lives in (default `us-east-1`) |
-| `VISION_MODEL_ID` | No | Bedrock inference profile for `plant_doctor` (default `us.anthropic.claude-sonnet-4-6`) |
-| `VISION_MODEL_REGION` | No | Region for the Bedrock vision call (default `us-east-1`) |
+| `TEXT_MODEL_ID` | No | Bedrock inference profile for the text agents (default `us.amazon.nova-pro-v1:0`) |
+| `TEXT_MODEL_REGION` | No | Region for the Bedrock text call (default `AWS_REGION`, else `us-east-1`) |
+| `VISION_MODEL_ID` | No | Bedrock inference profile for `plant_doctor` (default `us.amazon.nova-pro-v1:0`) |
+| `VISION_MODEL_REGION` | No | Region for the Bedrock vision call (default `AWS_REGION`, else `us-east-1`) |
+| `GEMINI_API_KEY` | No | Gemini key for local runs; enables the fallback behind Bedrock |
+| `GEMINI_API_KEY_SECRET` | No | Secrets Manager secret *name* holding that key, for deployed runtimes |
+| `GEMINI_MODEL_ID` | No | Gemini model behind the text agents (default `gemini-3.1-flash-lite`) |
+| `GEMINI_VISION_MODEL_ID` | No | Gemini model behind `plant_doctor` (defaults to `GEMINI_MODEL_ID`) |
+
+Both the text and the photo path run Bedrock in front with Gemini behind it, wired
+with Strands' `ModelRouter`: a throttle, outage or model error moves the turn onto
+Gemini mid-conversation instead of losing it. With no Gemini key the bare Bedrock
+model is used and the absence is logged — it costs redundancy, not the answer.
+
+Anthropic models are listed by Bedrock in this account but are **not invocable**:
+every `us.anthropic.*` id returns `ResourceNotFoundException` until the Anthropic
+use-case form is submitted. Nova needs no form. Verified 2026-09-19.
 
 # Photo diagnosis
 
@@ -39,31 +52,43 @@ Three pieces cooperate:
    model's context — an `Agent.as_tool()` call carries a JSON string, and routing a
    megabyte of base64 through it would mean the orchestrator's model emitting the
    whole image token by token.
-2. **`agents/plant_doctor.py`** is the specialist. It runs on Bedrock Claude (vision),
-   resolves the reference to real pixels, and reads the photo itself.
-3. **`tools/leaf_disease.py`** sends the same photo to a SageMaker endpoint running a
-   MobileNetV3-Small trained on the PlantVillage tomato subset, and returns the top
-   classes with confidence plus the treatment record for the winner.
+2. **`agents/plant_doctor.py`** is the specialist. It resolves the reference to real
+   pixels, reads the photo on a vision model, and names the disease.
+3. **`tools/leaf_disease.py`** takes that name and returns the cultural steps and
+   the spray rates for it, out of `tools/leaf_disease_treatments.py`.
 
-The two readings are deliberately independent. The classifier is accurate on the ten
-tomato classes and blind to everything else — given a chilli leaf it still returns a
-tomato disease, confidently. Claude's reading of the image is what catches that, and
-the prompt makes the agent reconcile the two and say when they disagree.
+The split at step 3 is the point. Identifying a disease from an image is a judgement
+the vision model should make. A spray dose is not: the shared guardrails forbid
+stating a figure that did not come from a tool result, and a dose is exactly the
+number a farmer acts on without checking. So the model decides *what* and the table
+decides *how much*.
 
-Treatments come from `tools/leaf_disease_treatments.py`, not from the model. The
-shared guardrails forbid stating a figure that did not come from a tool result, and a
-spray dose is exactly the number a farmer acts on without checking.
+The reference covers the ten common tomato leaf diseases. Matching is fuzzy, so
+"early blight", "Early Blight (Alternaria solani)" and `Tomato___Early_blight` all
+resolve to the same record. Anything outside the ten comes back `not_covered`, and
+the agent is told to give the identification without a dose and send the farmer to
+their KVK.
 
-## Prerequisites for the photo path
+There is **no trained classifier and no SageMaker endpoint**. An earlier design ran a
+PlantVillage-tuned MobileNetV3 alongside the vision model and made the agent
+reconcile the two readings. It was dropped: the endpoint was never deployed, and a
+model that forces every image into one of ten tomato classes — labelling a chilli
+leaf as tomato late blight at 90% confidence — needed the vision model to check it
+anyway. `scripts/plantvillage/` still builds it if that trade is worth revisiting.
 
-| What | How |
-| --- | --- |
-| The trained endpoint | Follow `scripts/plantvillage/README.md` |
-| Bedrock model access | **The Anthropic use case details form must be submitted for the AWS account.** Until it is, every Claude model returns `ResourceNotFoundException: Model use case details have not been submitted`. Fill it in at Bedrock console → Model access. |
+## Model access
 
-Both fail soft. With no endpoint the agent tells the farmer it could not analyse the
-photo instead of guessing; with no Bedrock access the `plant_doctor` tool call errors
-and the rest of the assistant keeps working.
+The photo path runs on `VISION_MODEL_ID`, Bedrock with Gemini behind it, exactly like
+the text path. The default is Nova Pro, which this account can invoke today.
+
+Anthropic models are listed but **not invocable**: every `us.anthropic.*` id returns
+`ResourceNotFoundException: Model use case details have not been submitted` until the
+Anthropic use case form is filled in at Bedrock console → Model access. Once it is,
+switching is a `VISION_MODEL_ID` change plus the matching resource in
+`policies/bedrock-vision-model.json`, which already grants the Claude ARNs.
+
+If Bedrock fails mid-turn the router moves onto Gemini. With no Gemini key configured
+the turn fails on Bedrock alone, and the rest of the assistant keeps working.
 
 ## Trying it
 
