@@ -227,6 +227,38 @@ def _text_event(text: str) -> dict:
     return {"event": {"contentBlockDelta": {"delta": {"text": text}}}}
 
 
+# ---------------------------------------------------------------- agent credits
+#
+# Which specialists answered a question is worth telling the farmer: "this came
+# from the crop and the market adviser" is a claim they can weigh, where an
+# unattributed paragraph is not. The orchestrator must not say it itself — its
+# prompt forbids mentioning specialists, and a model asked to report its own
+# routing will sometimes report routing that did not happen. So the roster is
+# read off the stream, where a specialist appears only because it was really
+# called.
+#
+# It travels to the browser as a marker appended to the answer text rather than
+# as its own event, because the chat Lambda between here and the browser keeps
+# only `contentBlockDelta.delta.text` and discards everything else, and that
+# Lambda is inlined against a 4096-character cap it has already nearly reached
+# (see infra/api.yaml). An HTML comment is invisible if anything ever renders the
+# text without stripping it first; the web client strips it in lib/api.ts.
+SPECIALISTS = frozenset(
+    {"crop_agent", "operations_agent", "advice_agent", "plant_doctor", "video_tutor"}
+)
+
+AGENTS_MARKER = "\n\n<!--agents:{names}-->"
+
+
+def _tool_name(event: dict):
+    """The tool a contentBlockStart is opening, or None for any other event."""
+    start = (event.get("event") or {}).get("contentBlockStart", {}).get("start")
+    if not isinstance(start, dict):
+        return None
+    name = (start.get("toolUse") or {}).get("name")
+    return name if isinstance(name, str) else None
+
+
 @app.entrypoint
 async def invoke(payload, context):
     log.info("Invoking Agent.....")
@@ -241,6 +273,10 @@ async def invoke(payload, context):
     prompt = _prompt_for(payload)
 
     thinking = ThinkingFilter()
+    # A list, not a set: the order the orchestrator reached for each specialist is
+    # the order the farmer's question raised them, which is the order to credit
+    # them in. Repeat calls are folded, so one specialist asked twice is named once.
+    consulted: list[str] = []
 
     async for event in agent.stream_async(
         prompt,
@@ -250,6 +286,10 @@ async def invoke(payload, context):
         cbs = event["event"].get("contentBlockStart")
         if cbs is not None and not cbs.get("start"):
             continue
+
+        called = _tool_name(event)
+        if called in SPECIALISTS and called not in consulted:
+            consulted.append(called)
 
         text = _delta_text(event)
         if text is None:
@@ -264,6 +304,9 @@ async def invoke(payload, context):
     tail = thinking.flush()
     if tail:
         yield _text_event(tail)
+
+    if consulted:
+        yield _text_event(AGENTS_MARKER.format(names=",".join(consulted)))
 
 
 if __name__ == "__main__":

@@ -35,8 +35,24 @@ export interface ChatReply {
   text: string
   sessionId: string
   truncated: boolean
+  /** Specialist agents that actually ran this turn, in the order they were called. */
+  agents: string[]
   warning?: string
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+}
+
+/**
+ * The roster the backend appends to the answer — see AGENTS_MARKER in
+ * app/Agromemnon/main.py for why it rides along in the text rather than in its
+ * own field. Anchored to the end and strict about its characters, so a farmer
+ * who types something that looks like an HTML comment cannot forge credits.
+ */
+const AGENTS_MARKER = /\s*<!--agents:([a-z_]+(?:,[a-z_]+)*)-->\s*$/
+
+function splitAgents(raw: string): { text: string; agents: string[] } {
+  const match = raw.match(AGENTS_MARKER)
+  if (!match) return { text: raw, agents: [] }
+  return { text: raw.slice(0, match.index).trimEnd(), agents: match[1].split(',') }
 }
 
 /** Language names in English, so the instruction is unambiguous to the model. */
@@ -150,13 +166,17 @@ export async function sendChat({
     throw new ChatError('upstream', detail || `The adviser could not answer (${response.status}).`)
   }
 
-  const text = typeof body.response === 'string' ? body.response : ''
+  const raw = typeof body.response === 'string' ? body.response : ''
+  // The marker is stripped before the emptiness check: an answer that was nothing
+  // but credits is still an empty answer.
+  const { text, agents } = splitAgents(raw)
   if (!text) {
     throw new ChatError('upstream', detail || 'The adviser returned an empty answer.')
   }
 
   return {
     text,
+    agents,
     sessionId: typeof body.sessionId === 'string' ? body.sessionId : sessionId,
     truncated: body.truncated === true,
     warning: typeof body.warning === 'string' ? body.warning : undefined,

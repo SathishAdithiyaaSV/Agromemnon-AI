@@ -134,6 +134,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           at: Date.now(),
           language,
           truncated: reply.truncated,
+          ...(reply.agents.length ? { agents: reply.agents } : {}),
           elapsedMs: Date.now() - startedAt,
         }
         patch(conversationId, (conversation) => ({

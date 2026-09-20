@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { useLanguage } from '@/contexts/language-context'
 import type { ChatMessage } from '@/lib/conversations'
 import { cn } from '@/lib/utils'
+import { AgentCredits } from './agent-credits'
 
 function clockTime(at: number, locale: string): string {
   return new Date(at).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
@@ -98,6 +99,10 @@ export function MessageBubble({
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
               {t('chat.truncated')}
             </p>
+          )}
+
+          {message.agents && message.agents.length > 0 && (
+            <AgentCredits agents={message.agents} />
           )}
         </div>
 

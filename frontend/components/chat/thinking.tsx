@@ -3,14 +3,33 @@
 import { useEffect, useState } from 'react'
 import { Logo } from '@/components/brand'
 import { useLanguage } from '@/contexts/language-context'
+import type { TranslationKey } from '@/lib/i18n'
 
 /**
- * A turn takes roughly 10–25 seconds — several tool calls behind one synchronous
- * request — and API Gateway cuts it off at 30. A counter is shown rather than a
- * bare spinner so the wait feels accounted for, and the wording changes once it
- * passes the point where a quick answer was likely.
+ * What the system is doing while a turn runs.
+ *
+ * The phases are on a timer, not on live progress, and that is a limitation of
+ * the transport rather than a choice: /chat is a synchronous request behind API
+ * Gateway (see lib/api.ts), so the browser gets one response at the end and
+ * nothing in between. Naming a specific specialist here would therefore be a
+ * guess dressed up as a status line. The phases instead describe the stages the
+ * orchestrator really goes through, in the order it goes through them, and the
+ * specialists that actually ran are named honestly once the answer lands — see
+ * AgentCredits.
+ *
+ * The thresholds come from the shape of a real turn: routing is decided in the
+ * first couple of seconds, the specialists and their lookups take the bulk of
+ * the time, and the orchestrator writes its merged reply at the end. A turn runs
+ * roughly 10–25s and API Gateway cuts it off at 30, so the last phase also
+ * covers the wait turning long.
  */
-const LONG_WAIT_MS = 14_000
+const PHASES: ReadonlyArray<{ after: number; label: TranslationKey }> = [
+  { after: 0, label: 'chat.phase.routing' },
+  { after: 2_500, label: 'chat.thinking' },
+  { after: 8_000, label: 'chat.phase.data' },
+  { after: 15_000, label: 'chat.phase.writing' },
+  { after: 24_000, label: 'chat.thinkingLong' },
+]
 
 export function Thinking() {
   const { t } = useLanguage()
@@ -23,7 +42,13 @@ export function Thinking() {
   }, [])
 
   const seconds = Math.floor(elapsed / 1000)
-  const label = elapsed > LONG_WAIT_MS ? t('chat.thinkingLong') : t('chat.thinking')
+  // The last phase whose threshold has passed. PHASES[0] starts at 0, so there
+  // is always one. A plain scan rather than findLast, which needs a browser from
+  // 2022 onward — not a safe assumption for the phones this is built for.
+  let phase = PHASES[0]
+  for (const candidate of PHASES) {
+    if (elapsed >= candidate.after) phase = candidate
+  }
 
   return (
     <div className="flex gap-3" aria-live="polite">
@@ -41,7 +66,11 @@ export function Thinking() {
             />
           ))}
         </span>
-        <span className="text-sm text-muted-foreground">{label}</span>
+        {/* Keyed on the phase so each new label fades in rather than swapping
+            mid-word, which at this size reads as a glitch. */}
+        <span key={phase.label} className="animate-fade text-sm text-muted-foreground">
+          {t(phase.label)}
+        </span>
         <span className="text-xs tabular-nums text-muted-foreground/70">{seconds}s</span>
       </div>
     </div>

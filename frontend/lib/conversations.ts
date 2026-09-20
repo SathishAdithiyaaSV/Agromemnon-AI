@@ -20,6 +20,8 @@ export interface ChatMessage {
   hadImage?: boolean
   /** Set when the agent hit the 30s ceiling mid-answer. */
   truncated?: boolean
+  /** Specialist agents that produced this answer, in the order they were called. */
+  agents?: string[]
   /** Set instead of `text` when the turn failed, so the UI can offer a retry. */
   error?: string
   elapsedMs?: number
