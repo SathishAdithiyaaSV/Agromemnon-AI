@@ -183,20 +183,39 @@ not been submitted for this account"). Submit it at Bedrock console → Model ac
 `us.anthropic.claude-sonnet-4-6` and adding the matching ARNs to
 `app/Agromemnon/policies/bedrock-text-model.json`. No code change is needed.
 
-### The deployed Gemini key
+### API keys in the deployed runtime
 
-The runtime reads the key from Secrets Manager, not from an environment variable — an
-AgentCore runtime's env vars are plain text in the deployed config, so a key put there is a
-key committed to the repo that produced it. Create it once:
+Three keys follow one rule, implemented once in `app/Agromemnon/secret_store.py`:
+read `$<NAME>` if it is set (local development, from the gitignored
+`agentcore/.env.local`), otherwise read the Secrets Manager secret named by
+`$<NAME>_SECRET`.
+
+They are **not** environment variables on the runtime. An AgentCore runtime's env vars are
+plain text in the deployed config, and `agentcore.json` is committed, so a key put there is
+a key published to anyone who can read the repository.
+
+| Key | Used by | Secret | Env var pointing at it |
+| --- | --- | --- | --- |
+| `GEMINI_API_KEY` | fallback model | `Agromemnon/gemini-api-key` | `GEMINI_API_KEY_SECRET` |
+| `WEATHERAPI_KEY` | `weather` tool | `Agromemnon/weatherapi-key` | `WEATHERAPI_KEY_SECRET` |
+| `DATA_GOV_API_KEY` | `historic_crops` tool | `Agromemnon/data-gov-api-key` | `DATA_GOV_API_KEY_SECRET` |
+
+Create one like this:
 
 ```bash
-aws secretsmanager create-secret --name Agromemnon/gemini-api-key \
+aws secretsmanager create-secret --name Agromemnon/weatherapi-key \
   --secret-string '<your key>' --region us-east-1
 ```
 
-`GEMINI_API_KEY_SECRET=Agromemnon/gemini-api-key` in `agentcore.json` points at it, and
-`app/Agromemnon/policies/gemini-api-key.json` grants the runtime role `GetSecretValue`.
-Rotating the key is `put-secret-value` with no redeploy.
+`policies/gemini-api-key.json` and `policies/external-api-keys.json` grant the runtime role
+`GetSecretValue` on them. Rotating a key is `put-secret-value` — but the value is cached for
+the life of the process, so a running runtime keeps the old key until it recycles; deploy a
+new version if you need the rotation to take effect immediately.
+
+Resolution never raises. A key that cannot be found returns `None`, and the caller decides
+the cost: the model drops to Bedrock-only, and a tool tells the farmer which figure it could
+not fetch. A runtime that refused to boot over one missing optional key would fail every
+question, including those that key has nothing to do with.
 
 ## 8. Validate the configuration
 
